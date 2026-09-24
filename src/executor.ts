@@ -41,6 +41,49 @@ function fail(req: SwapRequest, error: string, signature?: string): SwapResult {
   return { ok: false, error, signature, inAmountRaw: req.amountRaw, outAmountRaw: 0n, inUsd: 0, outUsd: 0 }
 }
 
+/**
+ * The simulation guard's decision, on balances before and after a simulated
+ * swap. Changes are summed per mint so a second account of the same token
+ * cannot be drained under the cover of the first. Returns a reason to refuse
+ * the transaction, or null when it only moves what was asked.
+ */
+export function checkBalanceChanges(p: {
+  req: Pick<SwapRequest, 'inputMint' | 'outputMint' | 'amountRaw'>
+  preLamports: bigint
+  postLamports: bigint
+  /** account -> raw amount before */
+  pre: Map<string, bigint>
+  /** account -> raw amount after (null = closed or absent) */
+  post: Record<string, bigint | null>
+  /** account -> mint, for every watched account */
+  accountMints: Map<string, string>
+}): string | null {
+  const { req } = p
+  const solSpent = req.inputMint === SOL_MINT ? req.amountRaw : 0n
+  const lamportDelta = p.postLamports - p.preLamports
+  if (lamportDelta < -(solSpent + MAX_SOL_OVERHEAD_LAMPORTS)) return `SOL would drop by ${-lamportDelta} lamports`
+  const delta = new Map<string, bigint>()
+  for (const [account, mint] of p.accountMints) {
+    const change = (p.post[account] ?? 0n) - (p.pre.get(account) ?? 0n)
+    delta.set(mint, (delta.get(mint) ?? 0n) + change)
+  }
+  for (const [mint, d] of delta) {
+    if (mint === req.inputMint) {
+      if (-d > req.amountRaw) return `input would lose ${-d}, more than the ${req.amountRaw} requested`
+    } else if (mint === req.outputMint && mint !== SOL_MINT) {
+      if (d <= 0n) return 'output account would not receive tokens'
+    } else if (d < 0n) {
+      return `unrelated token ${mint} would decrease by ${-d}`
+    }
+  }
+  if (req.outputMint === SOL_MINT) {
+    if (lamportDelta <= 0n) return 'SOL output would not arrive'
+  } else if (!((delta.get(req.outputMint) ?? 0n) > 0n)) {
+    return 'output account would not receive tokens'
+  }
+  return null
+}
+
 /** Value check of a quote against reference prices. Returns an error string or null. */
 export function checkQuote(req: SwapRequest, order: UltraOrder): { inUsd: number; outUsd: number; error: string | null } {
   if (order.errorCode || order.error || order.errorMessage) {
@@ -127,13 +170,11 @@ export class LiveExecutor implements Executor {
     } catch (e) {
       return `could not read balances: ${errMsg(e)}`
     }
-    const pre = new Map(holdings.map((h) => [h.account, h]))
     const watch = new Set(holdings.map((h) => h.account))
-    let outAccount: string | null = null
-    if (req.outputMint !== SOL_MINT) {
-      outAccount = holdings.find((h) => h.mint === req.outputMint)?.account ?? associatedTokenAddress(wallet, req.outputMint, req.outputProgram ?? TOKEN_PROGRAM)
-      watch.add(outAccount)
-    }
+    // Existing accounts of the output mint are already watched; the associated
+    // account is where a new balance lands.
+    const outAccount = req.outputMint !== SOL_MINT ? associatedTokenAddress(wallet, req.outputMint, req.outputProgram ?? TOKEN_PROGRAM) : null
+    if (outAccount) watch.add(outAccount)
     let sim
     try {
       sim = await this.sol.simulateBalances(tx, wallet, [...watch])
@@ -143,24 +184,18 @@ export class LiveExecutor implements Executor {
     if (sim.err) return `simulation error ${JSON.stringify(sim.err)} ${sim.logs.slice(-3).join(' | ')}`
     if (sim.lamports === null) return 'simulation returned no wallet state'
 
-    const solSpent = req.inputMint === SOL_MINT ? req.amountRaw : 0n
-    const lamportDelta = BigInt(sim.lamports) - BigInt(preLamports)
-    if (lamportDelta < -(solSpent + MAX_SOL_OVERHEAD_LAMPORTS)) return `SOL would drop by ${-lamportDelta} lamports`
-
-    for (const account of watch) {
-      const before = pre.get(account)?.amountRaw ?? 0n
-      const after = sim.tokenAmounts[account] ?? 0n
-      const mint = pre.get(account)?.mint ?? (account === outAccount ? req.outputMint : 'unknown')
-      if (mint === req.inputMint) {
-        if (before - after > req.amountRaw) return `input account would lose ${before - after}, more than ${req.amountRaw}`
-      } else if (account === outAccount) {
-        if (after <= before) return 'output account would not receive tokens'
-      } else if (after < before) {
-        return `unrelated token account ${account} (${mint}) would decrease`
-      }
-    }
-    if (req.outputMint === SOL_MINT && lamportDelta <= 0n) return 'SOL output would not arrive'
-    log.debug('simulation guard passed', { lamportDelta: lamportDelta.toString() })
+    const accountMints = new Map(holdings.map((h) => [h.account, h.mint]))
+    if (outAccount) accountMints.set(outAccount, req.outputMint)
+    const verdict = checkBalanceChanges({
+      req,
+      preLamports: BigInt(preLamports),
+      postLamports: BigInt(sim.lamports),
+      pre: new Map(holdings.map((h) => [h.account, h.amountRaw])),
+      post: sim.tokenAmounts,
+      accountMints,
+    })
+    if (verdict) return verdict
+    log.debug('simulation guard passed')
     return null
   }
 }
