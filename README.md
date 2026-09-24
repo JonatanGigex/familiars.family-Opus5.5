@@ -129,9 +129,11 @@ necesita.
 
 ### 2. Financiar
 
-Envía SOL o USDC a la wallet del agente. familiars cuenta los depósitos como
-flujos, no como beneficio. El agente aparca el SOL sobrante en USDC y deja
-0,03 SOL para comisiones.
+Envía SOL o USDC a la wallet del agente e incluye **al menos 0,05 SOL** para
+comisiones y para el rent de las cuentas de token. familiars cuenta los depósitos
+como flujos, no como beneficio. El agente aparca el SOL que exceda la reserva
+(0,03 SOL) en USDC y, si solo recibe USDC, compra el SOL que le falte para la
+reserva.
 
 ### 3. Límites del propietario (recomendado)
 

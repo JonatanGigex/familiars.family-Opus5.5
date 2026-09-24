@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { exitTolerance } from '../src/agent.js'
 import { accountFromHistory, DEFAULT_RISK, entryGuard, parseDirective, sizePosition } from '../src/risk.js'
 
 const noLimits = { instructions: null, maxPositionUsd: null, dailyLimitUsd: null }
@@ -86,5 +87,15 @@ describe('parseDirective', () => {
     expect(parseDirective('Liquidate everything now')).toBe('liquidate')
     expect(parseDirective('vende todo')).toBe('liquidate')
     expect(parseDirective(null)).toBeNull()
+  })
+})
+
+describe('exitTolerance', () => {
+  it('widens only after repeated failed exits', () => {
+    expect(exitTolerance(0, 0.03)).toBe(0.08)
+    expect(exitTolerance(2, 0.03)).toBe(0.08)
+    expect(exitTolerance(3, 0.03)).toBe(0.15)
+    expect(exitTolerance(6, 0.03)).toBe(0.25)
+    expect(exitTolerance(9, 0.2)).toBe(0.4)
   })
 })

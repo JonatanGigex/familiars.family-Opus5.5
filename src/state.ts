@@ -74,6 +74,8 @@ export interface AgentState {
   introPosted?: boolean
   /** Our familiars handle, learned from /api/agent/me. */
   handle?: string
+  /** Consecutive failed exits per mint; widens the exit tolerance. */
+  sellFailures?: Record<string, number>
 }
 
 export function emptyState(): AgentState {

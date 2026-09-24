@@ -64,6 +64,7 @@ export interface TickReport {
 
 // Per-process caches: token metadata, best pairs, and the last bar evaluated per mint.
 const tokenMeta = new Map<string, JupToken>()
+const tokenMetaAt = new Map<string, number>()
 const pairCache = new Map<string, { at: number; pair: PairInfo | null }>()
 const lastEvaluatedBar = new Map<string, number>()
 let discovered: { at: number; mints: string[] } = { at: 0, mints: [] }
@@ -75,10 +76,15 @@ function closedBars(candles: Candle[], nowSec: number, barSec: number): Candle[]
   return candles.filter((c) => c.t + barSec + 60 <= nowSec)
 }
 
-async function metaFor(jup: JupiterClient, mints: string[]): Promise<void> {
-  const missing = mints.filter((m) => !tokenMeta.has(m))
-  if (!missing.length) return
-  for (const t of await jup.tokens(missing)) tokenMeta.set(t.id, t)
+/** Loads token metadata; `maxAgeMs` refreshes entries whose stats may have gone stale. */
+async function metaFor(jup: JupiterClient, mints: string[], maxAgeMs = Infinity): Promise<void> {
+  const now = Date.now()
+  const stale = mints.filter((m) => !tokenMeta.has(m) || now - (tokenMetaAt.get(m) ?? 0) > maxAgeMs)
+  if (!stale.length) return
+  for (const t of await jup.tokens(stale)) {
+    tokenMeta.set(t.id, t)
+    tokenMetaAt.set(t.id, now)
+  }
 }
 
 async function pairFor(mint: string): Promise<PairInfo | null> {
@@ -160,6 +166,14 @@ function toRaw(qty: number, decimals: number): bigint {
 
 // --- trading actions -----------------------------------------------------
 
+/** Max value an exit may give up versus the reference price, after `failures` failed attempts. */
+export function exitTolerance(failures: number, maxSwapLossPct: number): number {
+  const base = Math.max(maxSwapLossPct * 2, 0.08)
+  if (failures >= 6) return Math.max(base, 0.25)
+  if (failures >= 3) return Math.max(base, 0.15)
+  return base
+}
+
 async function sellPosition(deps: AgentDeps, state: AgentState, pos: PositionState, holding: Holding | undefined, price: number, reason: string, actions: string[]): Promise<boolean> {
   const { params } = deps
   const qty = holding?.qty ?? 0
@@ -179,14 +193,17 @@ async function sellPosition(deps: AgentDeps, state: AgentState, pos: PositionSta
     outputDecimals: 6,
     inputPriceUsd: price,
     outputPriceUsd: 1,
-    // Exits must get out: allow a wider band than entries.
-    maxLossPct: Math.max(params.maxSwapLossPct * 2, 0.08),
+    // Exits must get out: a wider band than entries, widening further while a
+    // falling market keeps the reference price ahead of what can be filled.
+    maxLossPct: exitTolerance(state.sellFailures?.[pos.mint] ?? 0, params.maxSwapLossPct),
   })
   if (!res.ok) {
-    actions.push(`SELL ${pos.symbol} failed: ${res.error}`)
+    state.sellFailures = { ...state.sellFailures, [pos.mint]: (state.sellFailures?.[pos.mint] ?? 0) + 1 }
+    actions.push(`SELL ${pos.symbol} failed (${state.sellFailures[pos.mint]}x): ${res.error}`)
     log.warn(`sell ${pos.symbol} failed`, { error: res.error })
     return false
   }
+  if (state.sellFailures) delete state.sellFailures[pos.mint]
   const proceeds = Number(res.outAmountRaw) / 1e6
   const soldQty = Number(res.inAmountRaw) / 10 ** decimals
   const cost = pos.costUsd * Math.min(1, soldQty / pos.qty)
@@ -347,23 +364,46 @@ async function reconcile(deps: AgentDeps, state: AgentState, snap: Awaited<Retur
   }
 }
 
-/** Idle SOL above the fee reserve goes to USDC: the agent is flat unless it has a signal. */
-async function sweepSol(deps: AgentDeps, state: AgentState, snap: Awaited<ReturnType<typeof snapshot>>, actions: string[]): Promise<void> {
+/**
+ * Keeps the SOL fee reserve at its target: idle SOL above it goes to USDC (the
+ * agent is flat unless it has a signal) and a wallet funded only with USDC buys
+ * the SOL it needs for fees and token-account rent.
+ */
+async function balanceSol(deps: AgentDeps, state: AgentState, snap: Awaited<ReturnType<typeof snapshot>>, actions: string[]): Promise<void> {
   if (!deps.wallet) return
   const solPrice = snap.prices[SOL_MINT] ?? 0
-  const free = snap.solQty - deps.params.risk.solReserve
-  if (!(solPrice > 0) || free * solPrice < 10) return
-  const res = await deps.executor.swap({
-    inputMint: SOL_MINT,
-    outputMint: USDC_MINT,
-    amountRaw: toRaw(free, 9),
-    inputDecimals: 9,
-    outputDecimals: 6,
-    inputPriceUsd: solPrice,
-    outputPriceUsd: 1,
-    maxLossPct: deps.params.maxSwapLossPct,
-  })
-  actions.push(res.ok ? `parked ${free.toFixed(4)} idle SOL in USDC` : `could not park idle SOL: ${res.error}`)
+  if (!(solPrice > 0)) return
+  const reserve = deps.params.risk.solReserve
+  const free = snap.solQty - reserve
+  if (free * solPrice >= 10) {
+    const res = await deps.executor.swap({
+      inputMint: SOL_MINT,
+      outputMint: USDC_MINT,
+      amountRaw: toRaw(free, 9),
+      inputDecimals: 9,
+      outputDecimals: 6,
+      inputPriceUsd: solPrice,
+      outputPriceUsd: 1,
+      maxLossPct: deps.params.maxSwapLossPct,
+    })
+    actions.push(res.ok ? `parked ${free.toFixed(4)} idle SOL in USDC` : `could not park idle SOL: ${res.error}`)
+    return
+  }
+  const missingUsd = (reserve - snap.solQty) * solPrice
+  if (snap.solQty < reserve / 2 && snap.cashUsd >= missingUsd + 5) {
+    const usd = Math.max(missingUsd, 1)
+    const res = await deps.executor.swap({
+      inputMint: USDC_MINT,
+      outputMint: SOL_MINT,
+      amountRaw: toRaw(usd, 6),
+      inputDecimals: 6,
+      outputDecimals: 9,
+      inputPriceUsd: 1,
+      outputPriceUsd: solPrice,
+      maxLossPct: deps.params.maxSwapLossPct,
+    })
+    actions.push(res.ok ? `topped up the SOL fee reserve with $${usd.toFixed(2)}` : `could not top up SOL reserve: ${res.error}`)
+  }
 }
 
 async function findEntries(deps: AgentDeps, state: AgentState, snap: Awaited<ReturnType<typeof snapshot>>, owner: OwnerSettings, actions: string[]): Promise<void> {
@@ -387,7 +427,8 @@ async function findEntries(deps: AgentDeps, state: AgentState, snap: Awaited<Ret
     discovered = { at: now, mints: await discoverMints(deps.jup, params.coreMints) }
   }
   const candidates = discovered.mints.filter((m) => !state.positions[m] && (state.cooldowns[m] ?? 0) < now)
-  await metaFor(deps.jup, candidates)
+  // Screening needs current liquidity, volume and audit data, not the first read.
+  await metaFor(deps.jup, candidates, 15 * 60_000)
   const screened = candidates
     .map((m) => tokenMeta.get(m))
     .filter((t): t is JupToken => !!t)
@@ -629,8 +670,9 @@ export async function tick(deps: AgentDeps, state: AgentState): Promise<TickRepo
 
   // 3) Exits first: they are never blocked.
   await manageExits(deps, state, snap, directive, actions)
-  await sweepSol(deps, state, snap, actions)
-  if (actions.some((a) => a.startsWith('SELL') || a.startsWith('parked'))) snap = await snapshot(deps, state)
+  // A paused agent only makes protective exits.
+  if (directive !== 'pause') await balanceSol(deps, state, snap, actions)
+  if (actions.some((a) => a.startsWith('SELL') || a.startsWith('parked') || a.startsWith('topped up'))) snap = await snapshot(deps, state)
 
   // 4) Entries, behind every guard.
   const guard =
