@@ -39,6 +39,8 @@ export interface AgentDeps {
   /** Agent wallet (live) or null in paper mode. */
   wallet: string | null
   params: AgentParams
+  /** Deepest pair per mint; DexScreener by default (injectable for tests). */
+  pairs?: (mints: string[]) => Promise<Record<string, PairInfo>>
 }
 
 export interface Holding {
@@ -69,6 +71,16 @@ const pairCache = new Map<string, { at: number; pair: PairInfo | null }>()
 const lastEvaluatedBar = new Map<string, number>()
 let discovered: { at: number; mints: string[] } = { at: 0, mints: [] }
 
+/** Clears per-process caches (tests, or after a configuration change). */
+export function resetCaches(): void {
+  tokenMeta.clear()
+  tokenMetaAt.clear()
+  pairCache.clear()
+  lastEvaluatedBar.clear()
+  discovered = { at: 0, mints: [] }
+  detailCache = null
+}
+
 const HOUR = 3600
 
 function closedBars(candles: Candle[], nowSec: number, barSec: number): Candle[] {
@@ -87,17 +99,17 @@ async function metaFor(jup: JupiterClient, mints: string[], maxAgeMs = Infinity)
   }
 }
 
-async function pairFor(mint: string): Promise<PairInfo | null> {
+async function pairFor(deps: AgentDeps, mint: string): Promise<PairInfo | null> {
   const hit = pairCache.get(mint)
   if (hit && Date.now() - hit.at < 3.6e6) return hit.pair
-  const pairs = await bestPairs([mint])
+  const pairs = await (deps.pairs ?? bestPairs)([mint])
   const pair = pairs[mint] ?? null
   pairCache.set(mint, { at: Date.now(), pair })
   return pair
 }
 
 async function barCandles(deps: AgentDeps, mint: string, nowSec: number): Promise<{ pair: PairInfo; candles: Candle[] } | null> {
-  const pair = await pairFor(mint)
+  const pair = await pairFor(deps, mint)
   if (!pair) return null
   const barHours = deps.params.strategy.barHours
   const barSec = barHours * HOUR
