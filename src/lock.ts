@@ -8,13 +8,20 @@ const STALE_MS = 10 * 60_000
 
 /** True when the lock belongs to a live process that refreshed it recently. */
 function heldByOther(lock: string): boolean {
+  let pid: number
+  let at: number
   try {
-    const { pid, at } = JSON.parse(readFileSync(lock, 'utf8')) as { pid: number; at: number }
-    if (Date.now() - at > STALE_MS || pid === process.pid) return false
-    process.kill(pid, 0)
-    return true
+    ;({ pid, at } = JSON.parse(readFileSync(lock, 'utf8')) as { pid: number; at: number })
   } catch {
     return false
+  }
+  if (Date.now() - at > STALE_MS || pid === process.pid) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    // EPERM: the process exists but belongs to another user. Only ESRCH means gone.
+    return (e as NodeJS.ErrnoException).code === 'EPERM'
   }
 }
 
