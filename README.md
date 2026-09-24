@@ -6,23 +6,95 @@ tal como define la [skill oficial](https://familiars.family/skill.md).
 
 - Perfil público: <https://familiars.family/#/agent/ballast> · handle `@ballast`
 - Wallet del agente: `5xZtDbHure33YFm4xCyoKW8hBibn3m3bTJmasRuajutD`
-- Estrategia: seguimiento de tendencia en velas de 4 h con gestión de riesgo estricta
+- Modo activo: **lanzamientos**, memecoins recién salidas con los filtros del propietario (`"mode": "launch"` en `config/agent.json`)
+- Modo alternativo: **tendencia**, rupturas en velas de 4 h sobre tokens establecidos (`"mode": "trend"`)
 
-> **Aviso.** Operar tokens de Solana, y en especial memecoins, es de muy alto
-> riesgo: se puede perder todo el capital. Los resultados del backtest no
-> garantizan resultados futuros (ver limitaciones abajo). Usa solo dinero que
-> puedas permitirte perder.
+> **Aviso.** Operar tokens de Solana, y en especial memecoins recién lanzadas, es
+> de muy alto riesgo: se puede perder todo el capital. Según un informe de Solidus
+> Labs (2025), la gran mayoría de los tokens lanzados en pump.fun mostraron
+> patrones de *rug pull* o *pump & dump*. Los lanzamientos no se pueden
+> backtestear (los tokens muertos no dejan histórico), así que la única evidencia
+> es el forward test. Usa solo dinero que puedas permitirte perder.
 
 ## Cómo compite
 
 familiars ordena a los agentes por **P&L absoluto en USD** (valor de cartera menos
-depósitos netos) en ventanas de 24 h, 7 d, 30 d y total. Al registrar el agente
-(24/09/2026), solo 62 de 1.281 agentes estaban en positivo y la suma de todas las
-P&L era negativa. La mayoría pierde por operar tokens recién lanzados, sin stops y
-con costes altos. Ballast apuesta por lo contrario: pocas operaciones, filtros
-duros y pérdidas acotadas.
+depósitos netos) en ventanas de 24 h, 7 d, 30 d y total. El 24/09/2026 solo 37 de
+1.350 agentes estaban en positivo. Los mayores P&L venían del token propio del
+agente (lo que la skill prohíbe) o de **pocas apuestas tempranas en el token
+narrativo del día** ($familiars, JEANCOIN), mantenidas mientras subían. Ballast
+busca esas oportunidades con filtros anti-rug estrictos y pérdidas acotadas.
 
-## Estrategia
+## Estrategia de lanzamientos (modo activo)
+
+Cada pasada descubre en pump.fun los tokens con actividad reciente. Los precios, la
+liquidez, los holders y los datos del dev salen de Jupiter; nunca se usan las
+capitalizaciones de pump.fun, que pueden ser absurdas en tokens cotizados contra
+otros tokens.
+
+**Filtros del propietario**
+
+| Filtro | Valor |
+|---|---|
+| Edad máxima del token | 120 min |
+| Market cap mínimo | 10.000 $ |
+| Holders mínimos | 20 |
+| Bundlers | conservan ≤ 10 % del supply |
+| Fees pagados | ≥ 0,2 SOL |
+| Tenencia del dev | ≤ 10 % |
+| Redes sociales | al menos una (X, web o Telegram) |
+| Tecnología útil detrás | heurística más revisión del Claude de la rutina |
+
+**Protecciones añadidas por el agente**
+
+| Protección | Por qué |
+|---|---|
+| El bundle compró ≤ 30 % en el lanzamiento | Un lanzamiento empaquetado al 76-85 % es firma de estafa aunque ya haya vendido |
+| El dev ha lanzado ≤ 3 tokens | Hay devs con más de 2.400 tokens: fábricas de rugs |
+| Top 10 holders ≤ 35 %, market cap ≤ 3 M$ y liquidez ≥ 5.000 $ | Concentración, fase temprana y poder salir |
+| Coste de ida y vuelta ≤ 6 % | Detecta impuestos y *honeypots* |
+| Cotizado en SOL, autoridades revocadas y sin extensiones Token-2022 peligrosas | Seguridad básica |
+| Momentum: compras ≥ 1,1× ventas en 5 min, ≥ 8 traders, sin vela vertical | No comprar un token que ya se vende |
+
+**Forense on-chain** (ninguna API pública lo da de forma fiable):
+
+- *Bundlers*: compradores del mismo slot que la creación del token (sin contar al dev). Se mide cuánto compraron y cuánto conservan hoy.
+- *Fees pagados*: fees de red más propinas Jito de todos los traders. Se estiman con una muestra de transacciones repartida por la vida del token y se escalan al total. Es una aproximación; si tu definición de fees es otra (p. ej. comisiones de trading), se cambia en `src/onchain.ts`.
+- Si no se puede verificar (demasiadas transacciones para llegar a la creación), se rechaza.
+
+**Utilidad.** La heurística suma por web propia, cuenta de X que corresponde al
+token, código en GitHub y una descripción de producto. Resta por enlaces a cuentas
+famosas o a grandes plataformas (suplantación: en la primera prueba, $BEAST
+enlazaba a @MrBeast y a un producto de Amazon), por nombres de grandes marcas y por
+promesas de *hype*. En la rutina, además, Claude revisa cada candidato y solo se
+compran los aprobados (`LAUNCH_REQUIRE_APPROVAL=1`).
+
+**Salidas y tamaño**
+
+| Regla | Valor |
+|---|---|
+| Stop | −30 % |
+| Toma de beneficios | vende el 50 % a 2x |
+| Trailing | 35 % bajo el máximo, activo desde +50 % |
+| Stop temporal | 6 h sin +20 % |
+| Liquidez | salida si cae un 60 % desde la entrada |
+| Tamaño | riesgo del 1 % del capital por operación (≈ 3,3 % a −30 %) y ≤ 1 % de la liquidez del pool |
+| Posiciones | máximo 5 |
+| Tras salir | 12 h sin volver a entrar en ese token |
+
+**Aprendizaje.** Cada compra publica un bloque compacto con lo que vio el agente
+(`[mc=45k h=320 bh=2.0 …]`), así que el historial público de familiars es un
+dataset persistente. `npm run learn` compara ganadoras y perdedoras por rasgo,
+estudia a qué edad compran los mejores agentes del tablero y propone ajustes
+acotados:
+
+- Sin cambios hasta tener 20 operaciones cerradas.
+- Cada ajuste recorre como mucho la mitad del camino.
+- **Tus filtros solo se pueden endurecer, nunca relajar.**
+
+La rutina lo ejecuta a diario con `--apply --post`.
+
+## Estrategia de tendencia (modo alternativo)
 
 Evaluada al cierre de cada vela de 4 h (UTC 00/04/08/12/16/20):
 
@@ -171,11 +243,16 @@ Elige una:
   docker run -d --restart unless-stopped --env-file .secrets/agent.env \
     -e TRADING_MODE=live -v ballast-state:/app/state ballast
   ```
-- **Rutina de Claude Code.** Una sesión por hora clona este repositorio (las
-  sesiones de una rutina arrancan vacías) y ejecuta `scripts/routine.sh`: 55 min de
-  bucle y un resumen. Requiere `AGENT_SECRET_KEY` y `FAMILIARS_API_KEY` como variables
-  del entorno cloud, y cada ejecución consume uso de Claude. Activar el trading
-  autónomo con dinero real es decisión expresa del propietario.
+- **Rutina de Claude Code (activa, por petición del propietario).** Las rutinas
+  se ejecutan como mucho cada hora, así que cada sesión hace 5 ciclos de ~10 min.
+  En cada ciclo revisa los lanzamientos (aprueba o veta según su utilidad real) y
+  opera durante 6 min. Una vez al día ejecuta el aprendizaje. Las sesiones arrancan
+  vacías y clonan este repositorio. Se detienen al instante si faltan
+  `AGENT_SECRET_KEY` o `FAMILIARS_API_KEY` en las variables del entorno cloud, o si
+  la wallet no tiene fondos. Cada sesión consume uso de Claude.
+- **RPC recomendada.** La forense on-chain hace decenas de llamadas por token y la
+  RPC pública de Solana las limita (tarda 15-40 s por token). Una clave gratuita de
+  un proveedor como Helius en `SOLANA_RPC_URL` la hace fiable y más rápida.
 
 > No se usa GitHub Actions para operar: sus condiciones prohíben usar los runners
 > alojados para actividades ajenas a construir y probar el software. El workflow
@@ -207,6 +284,9 @@ Elige una:
 | `npm run tick` / `npm run run` | Una pasada / bucle. |
 | `npm run status` | Estado, límites del propietario y ranking. |
 | `npm run owner-key` | Emite una nueva owner key e invalida la anterior (skill §5). |
+| `npm run launches` | Escanea lanzamientos con todos los filtros y guarda los candidatos para revisión. |
+| `npm run learn -- [--apply] [--post]` | Revisión diaria: resultados propios, lecciones del tablero y ajustes acotados. |
+| `npm run funded` | Sale con código 0 si la wallet tiene ≥ 5 $ (la rutina se detiene si no). |
 | `npm run post -- --kind note --text "…"` | Post manual. |
 | `npm run backtest` / `npm run sweep` / `npm run fetch-data` | Investigación. |
 
@@ -224,6 +304,12 @@ src/
   solana.ts       saldos, datos del mint, simulación
   market.ts       pares (DexScreener) y velas (GeckoTerminal) con caché y ritmo
   rebuild.ts      reconstrucción de posiciones desde el historial público
+  launch.ts       reglas del modo lanzamientos (filtros, utilidad, momentum, salidas)
+  launch-agent.ts escaneo, entradas y salidas del modo lanzamientos
+  onchain.ts      forense: bundlers y fees pagados
+  pumpfun.ts      metadatos de lanzamientos (redes, descripción, creador)
+  learn.ts        aprendizaje a partir de resultados propios y del tablero
+  core.ts         cartera, velas, metadatos y ventas compartidas por los modos
   poster.ts       textos de los posts y cola con reintentos
   backtest.ts     motor de backtest de cartera
   cli/            comandos
