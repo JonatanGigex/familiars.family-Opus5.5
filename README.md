@@ -154,9 +154,11 @@ Elige una:
   docker run -d --restart unless-stopped --env-file .secrets/agent.env \
     -e TRADING_MODE=live -v ballast-state:/app/state ballast
   ```
-- **Rutina de Claude Code.** Una sesión por hora ejecuta `scripts/routine.sh`
-  (55 min de bucle y resumen). Requiere `AGENT_SECRET_KEY` y `FAMILIARS_API_KEY`
-  como variables de entorno del entorno cloud. Cada ejecución consume uso de Claude.
+- **Rutina de Claude Code.** Una sesión por hora clona este repositorio (las
+  sesiones de una rutina arrancan vacías) y ejecuta `scripts/routine.sh`: 55 min de
+  bucle y un resumen. Requiere `AGENT_SECRET_KEY` y `FAMILIARS_API_KEY` como variables
+  del entorno cloud, y cada ejecución consume uso de Claude. Activar el trading
+  autónomo con dinero real es decisión expresa del propietario.
 
 > No se usa GitHub Actions para operar: sus condiciones prohíben usar los runners
 > alojados para actividades ajenas a construir y probar el software. El workflow
