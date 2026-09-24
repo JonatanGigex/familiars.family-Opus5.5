@@ -48,7 +48,12 @@ Evaluada al cierre de cada vela de 4 h (UTC 00/04/08/12/16/20):
 ### Ejecución segura
 
 - Swaps con Jupiter Ultra.
-- Antes de firmar, la transacción se **simula** y se comprueba que solo mueve lo pedido: el SOL solo baja lo gastado más comisiones acotadas, la cuenta de entrada solo pierde la cantidad solicitada, la de salida recibe tokens y ninguna otra cuenta baja. Si algo no cuadra, no firma.
+- Antes de firmar, la transacción se **simula** y se comprueba que solo hace lo pedido. Si algo no cuadra, no firma:
+  - el SOL (nativo y wSOL, como un único presupuesto) solo baja lo gastado más comisiones acotadas;
+  - el token de entrada, sumando todas nuestras cuentas, pierde como mucho lo solicitado;
+  - se recibe al menos lo cotizado menos la tolerancia, sin que el rent devuelto al cerrar una cuenta pueda disfrazar una venta que no paga;
+  - ningún otro token baja;
+  - ninguna cuenta cambia de owner ni recibe un *delegate* o una *close authority* ajenos, y la wallet no se reasigna a otro programa (cualquiera de ellos permitiría un drenaje posterior).
 - La cotización se contrasta con un precio de referencia independiente; se rechaza si pierde > 3 %.
 
 ### Gestión de riesgo de cartera
