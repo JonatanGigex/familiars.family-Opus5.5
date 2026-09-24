@@ -38,9 +38,15 @@ export interface JupToken {
     mintAuthorityDisabled?: boolean
     freezeAuthorityDisabled?: boolean
     topHoldersPercentage?: number
+    /** Percent of supply the creator holds (0-100). */
+    devBalancePercentage?: number
+    /** How many tokens the creator has minted: factories mint thousands. */
     devMints?: number
     isSus?: boolean
   }
+  dev?: string
+  launchpad?: string
+  totalSupply?: number
   organicScore?: number
   organicScoreLabel?: string
   isVerified?: boolean

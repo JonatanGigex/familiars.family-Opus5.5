@@ -89,7 +89,7 @@ function makeDeps(state: AgentState, world: World, withOwner = false): AgentDeps
     ? ({ me: async () => ({ agent: { handle: 'ballast' }, settings: { instructions: world.instructions, maxPositionUsd: null, dailyLimitUsd: null } }) } as unknown as FamiliarsClient)
     : null
   const cfg = { familiarsBaseUrl: '', jupiterBaseUrl: '', rpcUrl: '', mode: 'paper', posting: false, statePath: '', cacheDir: '', secretsFile: '' } as AppConfig
-  const params = { ...loadParams(), coreMints: [X] }
+  const params = { ...loadParams(), mode: 'trend' as const, coreMints: [X] }
   return { cfg, jup, sol, fam, candles: candleSource, executor: new PaperExecutor(jup, state, USDC_MINT), wallet: null, params, pairs }
 }
 

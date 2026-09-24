@@ -10,6 +10,8 @@ export interface EntryInfo {
   price: number
   costUsd: number
   qty: number
+  /** Part of the holding was already sold (e.g. a take-profit). */
+  partialSold: boolean
 }
 
 /**
@@ -21,6 +23,7 @@ export function entryFromTrades(trades: AgentTrade[], mint: string, heldQty: num
   let qty = 0
   let cost = 0
   let firstBuy = 0
+  let partialSold = false
   for (const t of mine) {
     const amount = Math.abs(t.amount)
     const usd = Math.abs(t.usdValue ?? 0)
@@ -29,6 +32,7 @@ export function entryFromTrades(trades: AgentTrade[], mint: string, heldQty: num
         qty = 0
         cost = 0
         firstBuy = t.time
+        partialSold = false
       }
       qty += amount
       cost += usd
@@ -36,10 +40,11 @@ export function entryFromTrades(trades: AgentTrade[], mint: string, heldQty: num
       const sold = Math.min(amount, qty)
       if (qty > 0) cost *= 1 - sold / qty
       qty -= sold
+      if (qty > 0) partialSold = true
     }
   }
   if (!(qty > 0) || !(cost > 0) || !firstBuy) return null
-  return { timeSec: Math.floor(firstBuy / 1000), price: cost / qty, costUsd: cost * Math.min(1, heldQty / qty), qty }
+  return { timeSec: Math.floor(firstBuy / 1000), price: cost / qty, costUsd: cost * Math.min(1, heldQty / qty), qty, partialSold }
 }
 
 /** USD bought today (UTC) according to our public trade history. */

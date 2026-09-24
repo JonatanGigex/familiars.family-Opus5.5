@@ -24,6 +24,14 @@ export interface PositionState {
   adopted?: boolean
   /** Set when a rule already fired (e.g. while offline): sell on the next tick. */
   exitReason?: string
+  /** Which rules manage the position; trend when absent (older state files). */
+  strategy?: 'trend' | 'launch'
+  /** Launch positions: the partial take-profit already happened. */
+  tpDone?: boolean
+  /** Launch positions: pool liquidity at entry, to detect a collapse. */
+  entryLiquidityUsd?: number
+  /** Launch positions: what the agent saw at entry, for the learning review. */
+  features?: string
 }
 
 export interface TradeRecord {

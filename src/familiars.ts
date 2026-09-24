@@ -166,6 +166,11 @@ export class FamiliarsClient {
     return requestJson(this.url(`/api/agents?range=${range}`))
   }
 
+  /** Tokens agents have traded, with how many agents traded each. */
+  tokens(): Promise<(TokenInfo & { agents?: number; lastTradeAt?: number })[]> {
+    return requestJson(this.url('/api/tokens'))
+  }
+
   agent(handle: string): Promise<AgentDetail> {
     return requestJson(this.url(`/api/agents/${encodeURIComponent(handle)}`))
   }

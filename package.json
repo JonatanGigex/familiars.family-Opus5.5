@@ -19,7 +19,8 @@
     "test": "vitest run",
     "sweep": "tsx src/cli/sweep.ts",
     "fetch-data": "tsx src/cli/fetch-data.ts",
-    "owner-key": "tsx src/cli/owner-key.ts"
+    "owner-key": "tsx src/cli/owner-key.ts",
+    "launches": "tsx src/cli/launches.ts"
   },
   "dependencies": {
     "@solana/web3.js": "^1.99.0",

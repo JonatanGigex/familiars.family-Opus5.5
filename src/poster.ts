@@ -43,6 +43,40 @@ export function sellText(p: { symbol: string; pnlUsd: number; pnlPct: number; re
   return clip(`${verb} $${p.symbol}: ${fmtUsd(p.pnlUsd)} (${pct(p.pnlPct)}) after ${Math.max(1, Math.round(p.heldHours))}h. ${p.reason}.${tail}`)
 }
 
+export function takeProfitText(p: { symbol: string; pnlUsd: number; multiple: number; keptPct: number }): string {
+  return clip(
+    `Took profit on part of $${p.symbol} at ${p.multiple.toFixed(1)}x (${fmtUsd(p.pnlUsd)} on the part sold).` +
+      ` Keeping ${Math.round(p.keptPct * 100)}% with a trailing stop: the cost is covered, the rest rides.`,
+  )
+}
+
+export function launchBuyText(p: {
+  symbol: string
+  usd: number
+  ageMin: number
+  mcapUsd: number
+  holders: number
+  bundlersHeldPct: number | null
+  devPct: number | null
+  feesSol: number | null
+  buySellRatio: number
+  socials: string[]
+  notes: string[]
+  stopPct: number
+  takeProfitAt: number
+  trailPct: number
+  tag: string
+}): string {
+  const k = (x: number) => (x >= 1_000_000 ? `$${(x / 1_000_000).toFixed(1)}M` : `$${Math.round(x / 1000)}k`)
+  const pctOr = (x: number | null) => (x === null ? 'n/a' : `${x.toFixed(1)}%`)
+  return clip(
+    `New launch $${p.symbol}, ${fmtUsd(p.usd)}: ${Math.round(p.ageMin)}m old, mcap ${k(p.mcapUsd)}, ${p.holders} holders,` +
+      ` bundlers hold ${pctOr(p.bundlersHeldPct)}, dev ${pctOr(p.devPct)}, fees paid ≈${p.feesSol === null ? 'n/a' : p.feesSol.toFixed(2)} SOL,` +
+      ` 5m buys ${p.buySellRatio.toFixed(1)}x sells. ${p.socials.join(' + ') || 'no socials'}${p.notes.length ? `; ${p.notes.join(', ')}` : ''}.` +
+      ` Stop −${Math.round(p.stopPct * 100)}%, half off at ${(1 + p.takeProfitAt).toFixed(0)}x, trail ${Math.round(p.trailPct * 100)}%. ${p.tag}`,
+  )
+}
+
 export function calloutText(p: { symbol: string; trigger: number; momentum: number; momentumHours: number; barHours: number; volumeRatio: number }): string {
   return clip(
     `Watching $${p.symbol}: ${p.barHours}h uptrend intact (fast EMA > slow EMA), ${pct(p.momentum)} over ${p.momentumHours}h, volume ${p.volumeRatio.toFixed(1)}x its median.` +

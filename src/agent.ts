@@ -1,255 +1,53 @@
-import type { AppConfig } from './config.js'
-import type { Executor } from './executor.js'
-import type { AgentDetail, AgentTrade, FamiliarsClient, OwnerSettings } from './familiars.js'
-import type { Candle } from './indicators.js'
-import { JupiterClient, SOL_MINT, USDC_MINT, type JupToken } from './jupiter.js'
+import type { AgentDetail, AgentTrade, OwnerSettings } from './familiars.js'
+import { SOL_MINT, USDC_MINT, type JupToken } from './jupiter.js'
 import { errMsg, log } from './log.js'
-import { bestPairs, type CandleSource, type PairInfo } from './market.js'
-import { buyText, calloutText, enqueue, flushPosts, introText, recapText, sellText } from './poster.js'
-import { accountFromHistory, entryGuard, parseDirective, sizePosition, type AccountPnl, type RiskParams } from './risk.js'
-import { discoverMints, screenToken, shieldBlock, volume24h, type ScreenParams } from './screener.js'
-import { LAMPORTS_PER_SOL, mintRisks, type SolanaClient } from './solana.js'
-import { dayStats, utcDay, type AgentState, type PositionState } from './state.js'
+import type { PairInfo } from './market.js'
+import { buyText, calloutText, enqueue, flushPosts, introText, recapText } from './poster.js'
+import { accountFromHistory, entryGuard, parseDirective, sizePosition, type AccountPnl } from './risk.js'
+import { discoverMints, screenToken, shieldBlock, volume24h } from './screener.js'
+import { mintRisks } from './solana.js'
+import { dayStats, utcDay, type AgentState } from './state.js'
 import { boughtOnDay, entryFromTrades } from './rebuild.js'
-import { buildSeries, entrySignal, manageOnBarClose, regimeOn, replayPosition, warmupBars, type StrategyParams } from './strategy.js'
+import { buildSeries, entrySignal, manageOnBarClose, regimeOn, replayPosition, warmupBars } from './strategy.js'
+import {
+  barCandles,
+  HOUR,
+  metaFor,
+  resetCoreCaches,
+  sellPosition,
+  snapshot,
+  symbolOf,
+  tokenMeta,
+  toRaw,
+  type AgentDeps,
+  type AgentParams,
+  type Snapshot,
+  type TickReport,
+} from './core.js'
+import { findLaunchEntries, manageLaunchExits, rebuildLaunch, resetLaunchCaches } from './launch-agent.js'
 
-export interface AgentParams {
-  strategy: StrategyParams
-  risk: RiskParams
-  screen: ScreenParams
-  /** Max value lost versus reference prices on any swap. */
-  maxSwapLossPct: number
-  /** Max quoted round-trip cost (buy then sell back) for a new position. */
-  maxRoundTripPct: number
-  /** Skip an entry if price already ran this far above the signal close. */
-  maxChasePct: number
-  /** Tokens evaluated with candles per hour, ranked by 1h organic flow. */
-  maxCandidates: number
-  coreMints: string[]
-  calloutsPerDay: number
-}
+export type { AgentDeps, AgentParams, Holding, TickReport } from './core.js'
+export { exitTolerance } from './core.js'
 
-export interface AgentDeps {
-  cfg: AppConfig
-  jup: JupiterClient
-  sol: SolanaClient
-  fam: FamiliarsClient | null
-  candles: CandleSource
-  executor: Executor
-  /** Agent wallet (live) or null in paper mode. */
-  wallet: string | null
-  params: AgentParams
-  /** Deepest pair per mint; DexScreener by default (injectable for tests). */
-  pairs?: (mints: string[]) => Promise<Record<string, PairInfo>>
-}
+// Trend-strategy agent and the per-tick orchestration shared by all modes.
 
-export interface Holding {
-  mint: string
-  qty: number
-  amountRaw?: bigint
-  decimals: number
-  priceUsd: number
-  valueUsd: number
-}
-
-export interface TickReport {
-  at: string
-  mode: string
-  equityUsd: number
-  cashUsd: number
-  positions: { symbol: string; valueUsd: number; pnlPct: number; stop: number }[]
-  /** Equity minus net deposits (familiars' definition), when known. */
-  pnlUsd: number | null
-  actions: string[]
-  entryBlockedBy: string | null
-}
-
-// Per-process caches: token metadata, best pairs, and the last bar evaluated per mint.
-const tokenMeta = new Map<string, JupToken>()
-const tokenMetaAt = new Map<string, number>()
-const pairCache = new Map<string, { at: number; pair: PairInfo | null }>()
 const lastEvaluatedBar = new Map<string, number>()
 let discovered: { at: number; mints: string[] } = { at: 0, mints: [] }
 
 /** Clears per-process caches (tests, or after a configuration change). */
 export function resetCaches(): void {
-  tokenMeta.clear()
-  tokenMetaAt.clear()
-  pairCache.clear()
+  resetCoreCaches()
+  resetLaunchCaches()
   lastEvaluatedBar.clear()
   discovered = { at: 0, mints: [] }
   detailCache = null
 }
 
-const HOUR = 3600
-
-function closedBars(candles: Candle[], nowSec: number, barSec: number): Candle[] {
-  // A bar is final once its period has passed; give the data source a minute.
-  return candles.filter((c) => c.t + barSec + 60 <= nowSec)
-}
-
-/** Loads token metadata; `maxAgeMs` refreshes entries whose stats may have gone stale. */
-async function metaFor(jup: JupiterClient, mints: string[], maxAgeMs = Infinity): Promise<void> {
-  const now = Date.now()
-  const stale = mints.filter((m) => !tokenMeta.has(m) || now - (tokenMetaAt.get(m) ?? 0) > maxAgeMs)
-  if (!stale.length) return
-  for (const t of await jup.tokens(stale)) {
-    tokenMeta.set(t.id, t)
-    tokenMetaAt.set(t.id, now)
-  }
-}
-
-async function pairFor(deps: AgentDeps, mint: string): Promise<PairInfo | null> {
-  const hit = pairCache.get(mint)
-  if (hit && Date.now() - hit.at < 3.6e6) return hit.pair
-  const pairs = await (deps.pairs ?? bestPairs)([mint])
-  const pair = pairs[mint] ?? null
-  pairCache.set(mint, { at: Date.now(), pair })
-  return pair
-}
-
-async function barCandles(deps: AgentDeps, mint: string, nowSec: number): Promise<{ pair: PairInfo; candles: Candle[] } | null> {
-  const pair = await pairFor(deps, mint)
-  if (!pair) return null
-  const barHours = deps.params.strategy.barHours
-  const barSec = barHours * HOUR
-  // Refresh right after each bar closes; otherwise the cache is good.
-  const secsIntoBar = nowSec % barSec
-  const maxAge = secsIntoBar < 120 ? 30 : Math.max(60, secsIntoBar - 60)
-  const candles = await deps.candles.candles(pair.pairAddress, mint, 'hour', barHours, 300, maxAge)
-  return { pair, candles: closedBars(candles, nowSec, barSec) }
-}
-
-// --- portfolio -----------------------------------------------------------
-
-async function snapshot(deps: AgentDeps, state: AgentState): Promise<{ holdings: Map<string, Holding>; prices: Record<string, number>; cashUsd: number; solQty: number; equityUsd: number }> {
-  const holdings = new Map<string, Holding>()
-  let cashUsd = 0
-  let solQty = 0
-  const positionMints = Object.keys(state.positions)
-  if (deps.wallet) {
-    const [lamports, tokens] = await Promise.all([deps.sol.solBalanceLamports(deps.wallet), deps.sol.tokenBalances(deps.wallet)])
-    solQty = lamports / LAMPORTS_PER_SOL
-    const prices = await deps.jup.prices([SOL_MINT, USDC_MINT, ...positionMints, ...tokens.filter((t) => t.amountRaw > 0n).map((t) => t.mint)])
-    let wsolQty = 0
-    for (const t of tokens) {
-      if (t.amountRaw === 0n) continue
-      if (t.mint === USDC_MINT) {
-        cashUsd += t.uiAmount * (prices[USDC_MINT] ?? 1)
-        continue
-      }
-      if (t.mint === SOL_MINT) {
-        // Wrapped SOL counts toward equity with native SOL; swaps use native SOL only.
-        wsolQty += t.uiAmount
-        continue
-      }
-      const price = prices[t.mint] ?? 0
-      const prev = holdings.get(t.mint)
-      const qty = (prev?.qty ?? 0) + t.uiAmount
-      const amountRaw = (prev?.amountRaw ?? 0n) + t.amountRaw
-      holdings.set(t.mint, { mint: t.mint, qty, amountRaw, decimals: t.decimals, priceUsd: price, valueUsd: qty * price })
-    }
-    const solPrice = prices[SOL_MINT] ?? 0
-    holdings.set(SOL_MINT, { mint: SOL_MINT, qty: solQty + wsolQty, amountRaw: BigInt(lamports), decimals: 9, priceUsd: solPrice, valueUsd: (solQty + wsolQty) * solPrice })
-    let equityUsd = cashUsd
-    for (const h of holdings.values()) equityUsd += h.valueUsd
-    return { holdings, prices, cashUsd, solQty, equityUsd }
-  }
-  // Paper wallet.
-  const paper = (state.paper ??= { cashUsd: 0, balances: {} })
-  const prices = await deps.jup.prices([SOL_MINT, USDC_MINT, ...Object.keys(paper.balances), ...positionMints])
-  await metaFor(deps.jup, Object.keys(paper.balances))
-  cashUsd = paper.cashUsd
-  let equityUsd = cashUsd
-  for (const [mint, qty] of Object.entries(paper.balances)) {
-    const price = prices[mint] ?? 0
-    const decimals = mint === SOL_MINT ? 9 : (tokenMeta.get(mint)?.decimals ?? 6)
-    holdings.set(mint, { mint, qty, decimals, priceUsd: price, valueUsd: qty * price })
-    equityUsd += qty * price
-    if (mint === SOL_MINT) solQty = qty
-  }
-  return { holdings, prices, cashUsd, solQty, equityUsd }
-}
-
-function symbolOf(mint: string): string {
-  if (mint === SOL_MINT) return 'SOL'
-  return tokenMeta.get(mint)?.symbol ?? mint.slice(0, 4)
-}
-
-function toRaw(qty: number, decimals: number): bigint {
-  // Round down so we never ask to spend more than we hold.
-  const [int, frac = ''] = qty.toFixed(decimals).split('.')
-  return BigInt(int! + frac.padEnd(decimals, '0').slice(0, decimals))
-}
-
-// --- trading actions -----------------------------------------------------
-
-/** Max value an exit may give up versus the reference price, after `failures` failed attempts. */
-export function exitTolerance(failures: number, maxSwapLossPct: number): number {
-  const base = Math.max(maxSwapLossPct * 2, 0.08)
-  if (failures >= 6) return Math.max(base, 0.25)
-  if (failures >= 3) return Math.max(base, 0.15)
-  return base
-}
-
-async function sellPosition(deps: AgentDeps, state: AgentState, pos: PositionState, holding: Holding | undefined, price: number, reason: string, actions: string[]): Promise<boolean> {
-  const { params } = deps
-  const qty = holding?.qty ?? 0
-  const amountRaw = holding?.amountRaw
-  const decimals = holding?.decimals ?? tokenMeta.get(pos.mint)?.decimals ?? 6
-  if (qty <= 0) {
-    delete state.positions[pos.mint]
-    actions.push(`dropped ${pos.symbol}: no balance left`)
-    return true
-  }
-  const raw = amountRaw ?? toRaw(qty, decimals)
-  const res = await deps.executor.swap({
-    inputMint: pos.mint,
-    outputMint: USDC_MINT,
-    amountRaw: raw,
-    inputDecimals: decimals,
-    outputDecimals: 6,
-    inputPriceUsd: price,
-    outputPriceUsd: 1,
-    // Exits must get out: a wider band than entries, widening further while a
-    // falling market keeps the reference price ahead of what can be filled.
-    maxLossPct: exitTolerance(state.sellFailures?.[pos.mint] ?? 0, params.maxSwapLossPct),
-  })
-  if (!res.ok) {
-    state.sellFailures = { ...state.sellFailures, [pos.mint]: (state.sellFailures?.[pos.mint] ?? 0) + 1 }
-    actions.push(`SELL ${pos.symbol} failed (${state.sellFailures[pos.mint]}x): ${res.error}`)
-    log.warn(`sell ${pos.symbol} failed`, { error: res.error })
-    return false
-  }
-  if (state.sellFailures) delete state.sellFailures[pos.mint]
-  const proceeds = Number(res.outAmountRaw) / 1e6
-  const soldQty = Number(res.inAmountRaw) / 10 ** decimals
-  const cost = pos.costUsd * Math.min(1, soldQty / pos.qty)
-  const pnlUsd = proceeds - cost
-  const now = Date.now()
-  const day = dayStats(state, now, 0)
-  day.realizedPnlUsd += pnlUsd
-  day.trades++
-  state.trades.push({ time: now, side: 'sell', mint: pos.mint, symbol: pos.symbol, usd: proceeds, qty: soldQty, price: proceeds / soldQty, signature: res.signature, reason, pnlUsd })
-  if (pnlUsd < 0) state.cooldowns[pos.mint] = now + 6 * 3.6e6
-  delete state.positions[pos.mint]
-  actions.push(`SELL ${pos.symbol} ${proceeds.toFixed(2)} USDC (${pnlUsd >= 0 ? '+' : ''}${pnlUsd.toFixed(2)}) — ${reason}`)
-  log.info(`sold ${pos.symbol}`, { proceeds, pnlUsd, reason, signature: res.signature })
-  if (res.signature) {
-    enqueue(state, {
-      kind: 'trade',
-      signature: res.signature,
-      text: sellText({ symbol: pos.symbol, pnlUsd, pnlPct: pnlUsd / cost, reason, heldHours: (now - pos.openedAt) / 3.6e6 }),
-      delayMs: 90_000,
-    })
-  }
-  return true
-}
-
-async function manageExits(deps: AgentDeps, state: AgentState, snap: Awaited<ReturnType<typeof snapshot>>, directive: string | null, actions: string[]): Promise<void> {
+async function manageExits(deps: AgentDeps, state: AgentState, snap: Snapshot, directive: string | null, actions: string[]): Promise<void> {
   const nowSec = Math.floor(Date.now() / 1000)
   const roundTrip = 2 * 0.0025
   for (const pos of Object.values(state.positions)) {
+    if (pos.strategy === 'launch') continue
     const holding = snap.holdings.get(pos.mint)
     const price = snap.prices[pos.mint] ?? holding?.priceUsd ?? 0
     if (directive === 'liquidate') {
@@ -318,7 +116,7 @@ async function manageExits(deps: AgentDeps, state: AgentState, snap: Awaited<Ret
  * history by replaying the exit rules; failing that they are adopted with a
  * wide stop so they are managed rather than ignored.
  */
-async function reconcile(deps: AgentDeps, state: AgentState, snap: Awaited<ReturnType<typeof snapshot>>, actions: string[], trades: AgentTrade[]): Promise<void> {
+async function reconcile(deps: AgentDeps, state: AgentState, snap: Snapshot, actions: string[], trades: AgentTrade[]): Promise<void> {
   for (const pos of Object.values(state.positions)) {
     const h = snap.holdings.get(pos.mint)
     const held = h?.qty ?? 0
@@ -334,6 +132,10 @@ async function reconcile(deps: AgentDeps, state: AgentState, snap: Awaited<Retur
     (h) => h.mint !== SOL_MINT && h.mint !== USDC_MINT && !state.positions[h.mint] && !deps.params.screen.denylist.includes(h.mint) && h.valueUsd >= 5 && h.priceUsd > 0,
   )
   if (!untracked.length) return
+  if (deps.params.mode === 'launch') {
+    for (const h of untracked) await rebuildLaunch(deps, state, h, trades, actions)
+    return
+  }
   const barSec = deps.params.strategy.barHours * HOUR
   const nowSec = Math.floor(Date.now() / 1000)
   for (const h of untracked) {
@@ -394,7 +196,7 @@ async function reconcile(deps: AgentDeps, state: AgentState, snap: Awaited<Retur
  * agent is flat unless it has a signal) and a wallet funded only with USDC buys
  * the SOL it needs for fees and token-account rent.
  */
-async function balanceSol(deps: AgentDeps, state: AgentState, snap: Awaited<ReturnType<typeof snapshot>>, actions: string[]): Promise<void> {
+async function balanceSol(deps: AgentDeps, state: AgentState, snap: Snapshot, actions: string[]): Promise<void> {
   if (!deps.wallet) return
   const solPrice = snap.prices[SOL_MINT] ?? 0
   if (!(solPrice > 0)) return
@@ -431,7 +233,7 @@ async function balanceSol(deps: AgentDeps, state: AgentState, snap: Awaited<Retu
   }
 }
 
-async function findEntries(deps: AgentDeps, state: AgentState, snap: Awaited<ReturnType<typeof snapshot>>, owner: OwnerSettings, actions: string[]): Promise<void> {
+async function findEntries(deps: AgentDeps, state: AgentState, snap: Snapshot, owner: OwnerSettings, actions: string[]): Promise<void> {
   const { params } = deps
   const now = Date.now()
   const nowSec = Math.floor(now / 1000)
@@ -699,8 +501,9 @@ export async function tick(deps: AgentDeps, state: AgentState): Promise<TickRepo
     account = paperAccount(state, snap.equityUsd, day.startPnlUsd)
   }
 
-  // 3) Exits first: they are never blocked.
+  // 3) Exits first: they are never blocked. Each position follows its own rules.
   await manageExits(deps, state, snap, directive, actions)
+  await manageLaunchExits(deps, state, snap, directive, actions)
   // A paused agent only makes protective exits.
   if (directive !== 'pause') await balanceSol(deps, state, snap, actions)
   if (actions.some((a) => a.startsWith('SELL') || a.startsWith('parked') || a.startsWith('topped up'))) snap = await snapshot(deps, state)
@@ -716,7 +519,8 @@ export async function tick(deps: AgentDeps, state: AgentState): Promise<TickRepo
           : entryGuard(account, deps.params.risk)
   if (!guard) {
     try {
-      await findEntries(deps, state, snap, owner, actions)
+      if (deps.params.mode === 'launch') await findLaunchEntries(deps, state, snap, owner, actions)
+      else await findEntries(deps, state, snap, owner, actions)
     } catch (e) {
       actions.push(`entry scan failed: ${errMsg(e)}`)
     }
