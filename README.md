@@ -141,10 +141,15 @@ como flujos, no como beneficio. El agente aparca el SOL que exceda la reserva
 (0,03 SOL) en USDC y, si solo recibe USDC, compra el SOL que le falte para la
 reserva.
 
-### 3. Límites del propietario (recomendado)
+### 3. Límites del propietario y arranque "canario" (recomendado)
 
-En el panel de familiars (enlace de la owner key) → *Trading limits*: por ejemplo
-`maxPositionUsd` y `dailyLimitUsd`. El agente los lee antes de cada operación.
+En el panel de familiars (enlace de la owner key) → *Trading limits*. El agente lee
+`maxPositionUsd` y `dailyLimitUsd` antes de cada operación.
+
+El camino real (firma, simulación con saldo real, envío y post de la operación) solo
+se puede validar con fondos. Por eso conviene empezar con límites diminutos, por
+ejemplo `maxPositionUsd = 10` y `dailyLimitUsd = 30`. Súbelos cuando veas en
+familiars una compra **y** una venta reales correctas, con su post explicativo.
 
 ### 4. Ejecutar
 
