@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { runBacktest, DEFAULT_PORTFOLIO } from '../src/backtest.js'
+import { DEFAULT_PORTFOLIO, monteCarlo, runBacktest, type BacktestResult } from '../src/backtest.js'
 import type { Candle } from '../src/indicators.js'
 import { buildSeries, DEFAULT_PARAMS, entrySignal, manageOnBarClose, type StrategyParams } from '../src/strategy.js'
 
@@ -98,5 +98,33 @@ describe('runBacktest', () => {
     const t = res.trades[0]!
     expect(t.reason).toBe('stop (gap)')
     expect(t.ret).toBeLessThan(-0.25)
+  })
+})
+
+describe('monteCarlo', () => {
+  const result = (pnls: number[]): BacktestResult => ({
+    trades: pnls.map((pnl, k) => ({ sym: 'X', setup: 'breakout', entryT: k * 3600, exitT: k * 3600 + 1, entry: 1, exit: 1, sizeUsd: 100, pnlUsd: pnl, ret: pnl / 100, bars: 1, reason: 'x' })),
+    equity: pnls.map((_, k) => ({ t: k * 3600, v: 1000 })),
+    totalReturn: 0,
+    maxDrawdown: 0,
+    winRate: 0,
+    profitFactor: 0,
+    avgWin: 0,
+    avgLoss: 0,
+    exposure: 0,
+    sharpe: 0,
+  })
+
+  it('never loses when every trade wins, and is reproducible', () => {
+    const a = monteCarlo(result([10, 20, 5]), 10, 500)
+    expect(a.probLoss).toBe(0)
+    expect(a.maxDrawdown.p95).toBe(0)
+    expect(monteCarlo(result([10, -20, 5]), 10, 500)).toEqual(monteCarlo(result([10, -20, 5]), 10, 500))
+  })
+
+  it('always loses when every trade loses', () => {
+    const b = monteCarlo(result([-10, -5]), 5, 500)
+    expect(b.probLoss).toBe(1)
+    expect(b.returns.p95).toBeLessThan(0)
   })
 })

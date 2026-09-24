@@ -3,6 +3,7 @@ import {
   DEFAULT_PORTFOLIO,
   DEFAULT_ROTATION,
   holdReturn,
+  monteCarlo,
   loadResearchDir,
   runBacktest,
   runRotation,
@@ -25,6 +26,7 @@ const { values } = parseArgs({
     trades: { type: 'boolean', default: false },
     only: { type: 'string' },
     family: { type: 'string' },
+    montecarlo: { type: 'boolean', default: false },
   },
 })
 
@@ -105,5 +107,14 @@ for (const v of VARIANTS) {
   )
   if (values.trades) {
     for (const t of full.trades) console.log(`   ${iso(t.entryT)} ${t.sym.padEnd(10)} ${t.setup.padEnd(8)} ${pct(t.ret).padStart(7)} ${t.bars} bars  ${t.reason}`)
+  }
+  if (values.montecarlo && full.trades.length >= 20) {
+    const perDay = full.trades.length / ((end - testStart) / 86400)
+    for (const days of [30, 90]) {
+      const mc = monteCarlo(full, Math.max(1, Math.round(perDay * days)))
+      console.log(
+        `   Monte Carlo ${days}d (~${mc.horizonTrades} trades): return p5 ${pct(mc.returns.p5)} | p25 ${pct(mc.returns.p25)} | median ${pct(mc.returns.p50)} | p75 ${pct(mc.returns.p75)} | p95 ${pct(mc.returns.p95)}; max DD median ${pct(mc.maxDrawdown.p50)}, p95 ${pct(mc.maxDrawdown.p95)}; P(loss) ${pct(mc.probLoss)}`,
+      )
+    }
   }
 }

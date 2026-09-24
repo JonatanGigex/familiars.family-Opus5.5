@@ -396,3 +396,60 @@ export function runRotation(
   for (const k of [...open.keys()]) sell(k, endT, last.get(k)!, 'end of test', 0)
   return summarize(trades, equity, pp.initialEquity, cash, bars, investedBars)
 }
+
+// --- Monte Carlo ---------------------------------------------------------------
+
+export interface MonteCarloSummary {
+  horizonTrades: number
+  returns: { p5: number; p25: number; p50: number; p75: number; p95: number }
+  maxDrawdown: { p50: number; p95: number }
+  probLoss: number
+}
+
+/**
+ * Bootstraps the per-trade equity impact (pnl / equity at entry) into many
+ * sequences of `horizonTrades` trades. Trades are drawn independently, so
+ * correlation between overlapping positions is ignored: real drawdowns can be
+ * deeper than these.
+ */
+export function monteCarlo(res: BacktestResult, horizonTrades: number, runs = 10_000, seed = 42): MonteCarloSummary {
+  const eqAt = (t: number) => {
+    let lo = 0
+    let hi = res.equity.length - 1
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1
+      if (res.equity[mid]!.t <= t) lo = mid
+      else hi = mid - 1
+    }
+    return res.equity[lo]?.v ?? 1
+  }
+  const impacts = res.trades.map((t) => t.pnlUsd / eqAt(t.entryT)).filter(Number.isFinite)
+  let s = seed >>> 0
+  const rand = () => {
+    s = (s * 1664525 + 1013904223) >>> 0
+    return s / 2 ** 32
+  }
+  const finals: number[] = []
+  const dds: number[] = []
+  for (let r = 0; r < runs; r++) {
+    let eq = 1
+    let peak = 1
+    let dd = 0
+    for (let k = 0; k < horizonTrades; k++) {
+      eq *= 1 + impacts[Math.floor(rand() * impacts.length)]!
+      peak = Math.max(peak, eq)
+      dd = Math.max(dd, 1 - eq / peak)
+    }
+    finals.push(eq - 1)
+    dds.push(dd)
+  }
+  finals.sort((a, b) => a - b)
+  dds.sort((a, b) => a - b)
+  const q = (xs: number[], p: number) => xs[Math.min(xs.length - 1, Math.floor(p * xs.length))]!
+  return {
+    horizonTrades,
+    returns: { p5: q(finals, 0.05), p25: q(finals, 0.25), p50: q(finals, 0.5), p75: q(finals, 0.75), p95: q(finals, 0.95) },
+    maxDrawdown: { p50: q(dds, 0.5), p95: q(dds, 0.95) },
+    probLoss: finals.filter((x) => x < 0).length / finals.length,
+  }
+}

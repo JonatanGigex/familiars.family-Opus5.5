@@ -70,19 +70,23 @@ vida) con más liquidez, desde abril de 2026. Costes: 0,25 % por lado, más 0,3 
 deslizamiento en stops. Los costes están medidos con cotizaciones reales de Jupiter
 Ultra: 0,2-0,6 % ida y vuelta en tokens líquidos.
 
-Periodo 10/03/2026 → 24/09/2026 (división in-sample/out-of-sample el 07/07/2026), 42 tokens:
+Periodo 10/03/2026 → 24/09/2026 (división in-sample/out-of-sample el 07/07/2026), 45 tokens:
 
 | Estrategia | Operaciones | Rentabilidad | Máx. drawdown | Profit factor | In-sample | Out-of-sample |
 |---|---:|---:|---:|---:|---:|---:|
-| **Configuración desplegada** (4 h) | 118 | **+20,1 %** | **23,9 %** | 1,33 | +11,8 % | +9,7 % |
-| Ruptura en 1 h (descartada) | 608 | −57,8 % | 74,3 % | 0,79 | −17,2 % | −47,9 % |
-| Rotación por momentum 7 d, top-3 | 117 | +23,4 % | 61,9 % | 1,10 | +4,1 % | +17,9 % |
+| **Configuración desplegada** (4 h) | 119 | **+25,9 %** | **24,2 %** | 1,40 | +18,6 % | +7,2 % |
+| Ruptura en 1 h (descartada) | 623 | −45,5 % | 68,4 % | 0,86 | −7,0 % | −40,4 % |
+| Rotación por momentum 7 d, top-3 | 117 | +29,2 % | 62,6 % | 1,12 | +3,4 % | +24,3 % |
 | Mantener SOL (desde 11/04) | — | +35,8 % | 38,0 % | — | — | — |
-| Cesta equiponderada, 37 tokens (desde 11/04) | — | +73,0 % | 39,6 % | — | — | — |
+| Cesta equiponderada, 39 tokens (desde 11/04) | — | +68,7 % | 39,7 % | — | — | — |
 
 - **Robustez:** 29 de 30 variaciones de un parámetro cada vez siguen en positivo (`npm run sweep`). Solo empeora con stops más cortos (2 ATR), en coherencia con el resto del estudio.
-- **Tiempo invertido:** ~28 %. El resto del tiempo el agente está en USDC.
-- **Lectura honesta:** en este periodo, mayoritariamente alcista, mantener pasivamente la cesta de supervivientes rindió más, también en relación rentabilidad/drawdown. El drawdown mediano de un token individual fue del 55 % y el peor del 85 %. La estrategia sacrifica parte del alza a cambio de pérdidas acotadas por operación y de no estar expuesta cuando SOL pierde su tendencia. La muestra no incluye un mercado bajista prolongado, que es donde ese filtro debería aportar más.
+- **Tiempo invertido:** ~20 %. El resto del tiempo el agente está en USDC.
+- **Monte Carlo** (`npm run backtest -- --only configured --montecarlo`), remuestreando operaciones:
+  - 30 días (~18 operaciones): mediana +1,1 %, **probabilidad de pérdida 45 %**, percentil 5 −8,9 %, percentil 95 +26,5 %.
+  - 90 días (~54 operaciones): mediana +8,3 %, probabilidad de pérdida 31 %, percentil 5 −14,3 %, percentil 95 +54 %.
+  - Este cálculo trata las operaciones como independientes. En la realidad, las posiciones simultáneas están correlacionadas, así que el drawdown del backtest (24 %) es la referencia prudente.
+- **Lectura honesta:** es un perfil de *trend following*: muchas semanas planas o ligeramente negativas y pocas muy buenas. En este periodo, mayoritariamente alcista, mantener pasivamente la cesta de supervivientes rindió más, también en relación rentabilidad/drawdown. El drawdown mediano de un token individual fue del 56 % y el peor del 99 %. La estrategia sacrifica parte del alza a cambio de pérdidas acotadas por operación y de no estar expuesta cuando SOL pierde su tendencia. La muestra no incluye un mercado bajista prolongado, que es donde ese filtro debería aportar más.
 
 **Limitaciones (importantes):**
 
