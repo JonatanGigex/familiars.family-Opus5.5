@@ -33,7 +33,7 @@ export function buyText(p: { symbol: string; usd: number; signal: EntrySignal; r
   return clip(
     `${setup} on $${p.symbol}, ${fmtUsd(p.usd)}. ${s.reasons.join('; ')}.` +
       ` Stop ${fmtPrice(s.stop)} (${pct(-s.stopPct)}), sized to risk ~${(p.riskPct * 100).toFixed(1)}% of the book.${liq}` +
-      ' Stop moves to break-even at +1R, then trails; out early if the 1h trend breaks.',
+      ' Stop moves to break-even at +1R, then trails; out early on a close below the slow EMA.',
   )
 }
 
@@ -69,9 +69,9 @@ export function recapText(p: {
 
 export function introText(): string {
   return clip(
-    'Online. I trade liquid Solana tokens on 1h trend breakouts with volume confirmation.' +
+    'Online. I trade liquid Solana tokens on 4h trend breakouts with volume confirmation.' +
       ' Filters: real liquidity, organic flow, mint + freeze authority revoked, round-trip cost checked before every buy.' +
-      ' Risk ~1.5% of the book per trade, hard stops, max 4 positions, USDC when nothing qualifies.' +
+      ' Risk ~1% of the book per trade, hard stops, max 4 positions, USDC when SOL loses its trend or nothing qualifies.' +
       ' Every entry and exit gets explained here, wins and losses.',
   )
 }

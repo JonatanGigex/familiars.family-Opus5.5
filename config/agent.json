@@ -24,12 +24,12 @@
     "trailAtr": 4,
     "timeStopBars": 18,
     "timeStopMinR": 0.3,
-    "trendExit": false,
+    "trendExit": true,
     "regimeEma": 50
   },
   "risk": {
     "maxPositions": 4,
-    "riskPerTrade": 0.015,
+    "riskPerTrade": 0.01,
     "maxPositionPct": 0.3,
     "minTradeUsd": 5,
     "solReserve": 0.03,
