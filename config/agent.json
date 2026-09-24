@@ -27,6 +27,7 @@
     "minPriceChange1hPct": 0,
     "riskPerTrade": 0.01,
     "stopPct": 0.3,
+    "sizingLossPct": 0.45,
     "takeProfitAt": 1,
     "takeProfitFraction": 0.5,
     "trailActivateAt": 0.5,

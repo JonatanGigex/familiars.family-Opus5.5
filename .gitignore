@@ -9,6 +9,6 @@ coverage/
 *.key
 *.keypair.json
 # Local runtime state and caches (per machine)
-state/*.local.json
+state/
 .cache/
 data/ohlcv/

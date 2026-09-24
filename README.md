@@ -89,7 +89,7 @@ compran los aprobados (`LAUNCH_REQUIRE_APPROVAL=1`).
 | Trailing | 35 % bajo el máximo, activo desde +50 % |
 | Stop temporal | 6 h sin +20 % |
 | Liquidez | salida si cae un 60 % desde la entrada |
-| Tamaño | riesgo del 1 % del capital por operación (≈ 3,3 % a −30 %) y ≤ 1 % de la liquidez del pool |
+| Tamaño | riesgo del 1 % del capital por operación, calculado para una pérdida del 45 % (≈ 2,2 % del capital) porque los stops de lanzamientos se ejecutan con hueco: el primero en papel salió a −37 % con un stop de −30 %. Nunca más del 1 % de la liquidez del pool |
 | Posiciones | máximo 5 |
 | Tras salir | 12 h sin volver a entrar en ese token |
 
@@ -255,12 +255,16 @@ Elige una:
     -e TRADING_MODE=live -v ballast-state:/app/state ballast
   ```
 - **Rutina de Claude Code (activa, por petición del propietario).** Las rutinas
-  se ejecutan como mucho cada hora, así que cada sesión hace 5 ciclos de ~10 min.
-  En cada ciclo revisa los lanzamientos (aprueba o veta según su utilidad real) y
-  opera durante 6 min. Una vez al día ejecuta el aprendizaje. Las sesiones arrancan
-  vacías y clonan este repositorio. Se detienen al instante si faltan
-  `AGENT_SECRET_KEY` o `FAMILIARS_API_KEY` en las variables del entorno cloud, o si
-  la wallet no tiene fondos. Cada sesión consume uso de Claude.
+  se ejecutan como mucho cada hora. Cada sesión deja el agente operando en segundo
+  plano durante 50 min (vigila las posiciones cada 30 s) y, mientras tanto, Claude
+  revisa los lanzamientos a medida que aparecen (`launches --await-review`, como
+  mucho ~9 min por espera): aprueba o veta según su utilidad real, y el agente solo
+  compra lo aprobado. Así no quedan huecos sin vigilar durante las revisiones; solo
+  unos minutos entre sesiones, y el tamaño de las posiciones ya cuenta con ese hueco.
+  Una vez al día ejecuta el aprendizaje. Las sesiones arrancan vacías y clonan este
+  repositorio. Se detienen al instante si faltan `AGENT_SECRET_KEY` o
+  `FAMILIARS_API_KEY` en las variables del entorno cloud, o si la wallet no tiene
+  fondos. Cada sesión consume uso de Claude.
 - **RPC recomendada.** La forense on-chain hace decenas de llamadas por token y la
   RPC pública de Solana las limita (tarda 15-40 s por token). Una clave gratuita de
   un proveedor como Helius en `SOLANA_RPC_URL` la hace fiable y más rápida.
@@ -295,7 +299,7 @@ Elige una:
 | `npm run tick` / `npm run run` | Una pasada / bucle. |
 | `npm run status` | Estado, límites del propietario y ranking. |
 | `npm run owner-key` | Emite una nueva owner key e invalida la anterior (skill §5). |
-| `npm run launches` | Escanea lanzamientos con todos los filtros y guarda los candidatos para revisión. |
+| `npm run launches` | Escanea lanzamientos con todos los filtros y guarda los candidatos para revisión. Con `-- --await-review 480` espera hasta 8 min a que aparezca uno pendiente de veredicto. |
 | `npm run learn -- [--apply] [--post]` | Revisión diaria: resultados propios, lecciones del tablero y ajustes acotados. |
 | `npm run funded` | Sale con código 0 si la wallet tiene ≥ 5 $ (la rutina se detiene si no). |
 | `npm run post -- --kind note --text "…"` | Post manual. |

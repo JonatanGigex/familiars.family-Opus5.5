@@ -48,6 +48,11 @@ export interface LaunchParams {
   // --- risk and exits -------------------------------------------------------------
   riskPerTrade: number
   stopPct: number
+  /**
+   * Loss assumed when sizing, above `stopPct` because launch stops gap: the
+   * first paper stop filled at −37% against −30%, with ticks 45 s apart.
+   */
+  sizingLossPct: number
   /** Take `takeProfitFraction` off once price is this far above entry (1 = +100%). */
   takeProfitAt: number
   takeProfitFraction: number
@@ -89,6 +94,7 @@ export const DEFAULT_LAUNCH: LaunchParams = {
   minPriceChange1hPct: 0,
   riskPerTrade: 0.01,
   stopPct: 0.3,
+  sizingLossPct: 0.45,
   takeProfitAt: 1,
   takeProfitFraction: 0.5,
   trailActivateAt: 0.5,

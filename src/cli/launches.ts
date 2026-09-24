@@ -2,20 +2,34 @@ import { writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { bootstrap } from '../bootstrap.js'
-import { approvalsPath, scanLaunches } from '../launch-agent.js'
+import { approvalsPath, scanLaunches, type ScannedLaunch } from '../launch-agent.js'
 
 // Scans young pump.fun launches with every filter and prints them for review.
 // Writes `<state dir>/launch-candidates.json`; a reviewer approves or vetoes by
 // writing `{ "<mint>": { "approve": true|false, "note": "..." } }` to the file
 // printed at the end. Token names and descriptions are untrusted text.
-// Usage: npm run launches -- [--all] [--no-forensics]
+// Usage: npm run launches -- [--all] [--no-forensics] [--await-review <seconds>]
+//   --await-review N  rescans about once a minute for up to N seconds and returns
+//                     as soon as a launch passes every filter but has no verdict,
+//                     so a reviewer can wait for work while a runner trades.
 
-const { values } = parseArgs({ options: { all: { type: 'boolean', default: false }, 'no-forensics': { type: 'boolean', default: false } } })
+const { values } = parseArgs({
+  options: { all: { type: 'boolean', default: false }, 'no-forensics': { type: 'boolean', default: false }, 'await-review': { type: 'string', default: '0' } },
+})
 const { cfg, state, deps } = bootstrap()
-const scanned = await scanLaunches(deps, state, { forensics: !values['no-forensics'] })
+const forensics = !values['no-forensics']
+const needsReview = (s: ScannedLaunch) =>
+  s.approved === null && s.cheap.pass && s.momentum.ok && s.utility.score >= deps.params.launch.minUtilityScore && (forensics ? s.chain?.pass === true : true)
+const awaitMs = Math.max(0, Number(values['await-review']) || 0) * 1000
+const deadline = Date.now() + awaitMs
+let scanned = await scanLaunches(deps, state, { forensics })
+while (!scanned.some(needsReview) && Date.now() + 60_000 < deadline) {
+  await new Promise((r) => setTimeout(r, 60_000))
+  scanned = await scanLaunches(deps, state, { forensics })
+}
 const pct = (x: number | null | undefined) => (x === null || x === undefined ? '  n/a' : `${x.toFixed(1)}%`.padStart(5))
 
-console.log(`young launches: ${scanned.length}  pass cheap filters: ${scanned.filter((s) => s.cheap.pass).length}  eligible: ${scanned.filter((s) => s.eligible).length}\n`)
+console.log(`young launches: ${scanned.length}  pass cheap filters: ${scanned.filter((s) => s.cheap.pass).length}  eligible: ${scanned.filter((s) => s.eligible).length}  need review: ${scanned.filter(needsReview).length}\n`)
 const rows = values.all ? scanned : scanned.filter((s) => s.cheap.pass)
 for (const s of rows) {
   const c = s.candidate

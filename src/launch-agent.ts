@@ -221,7 +221,7 @@ export async function findLaunchEntries(deps: AgentDeps, state: AgentState, snap
       continue
     }
     const size = sizePosition(
-      { equityUsd: snap.equityUsd, spendableUsd: cash, stopPct: p.stopPct, openPositions: open + entries, boughtTodayUsd: day.boughtUsd, owner },
+      { equityUsd: snap.equityUsd, spendableUsd: cash, stopPct: Math.max(p.stopPct, p.sizingLossPct), openPositions: open + entries, boughtTodayUsd: day.boughtUsd, owner },
       risk,
     )
     const usd = Math.min(size.usd, c.liquidityUsd * p.maxPositionPctOfLiquidity)

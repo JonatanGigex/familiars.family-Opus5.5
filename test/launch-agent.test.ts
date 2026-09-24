@@ -102,8 +102,8 @@ describe('tick in launch mode (paper, fakes)', () => {
     const pos = state.positions[L]
     expect(pos, buy.actions.join(' | ')).toBeDefined()
     expect(pos!.strategy).toBe('launch')
-    // 1% of $1000 at a 30% stop is $33.33 (the pool allows $150).
-    expect(pos!.costUsd).toBeCloseTo(33.33, 1)
+    // 1% of $1000, sized for a 45% loss because launch stops gap: $22.22 (the pool allows $150).
+    expect(pos!.costUsd).toBeCloseTo(22.22, 1)
     expect(pos!.features).toMatch(/^\[mc=50k h=320 bh=1\.0/)
 
     world.price *= 2.1
