@@ -93,6 +93,7 @@ Periodo 10/03/2026 → 24/09/2026 (división in-sample/out-of-sample el 07/07/20
 - **Sesgo de supervivencia.** El universo son tokens líquidos *hoy*; los que murieron no están. Cualquier estrategia larga parece mejor de lo que será.
 - **Muestra corta.** ~5 meses con una fase lateral o bajista y otra muy alcista. Pocas operaciones grandes explican gran parte del resultado; es la naturaleza del *trend following*.
 - **Primer intento descartado.** Una ruptura en velas de 1 h parecía ganar +55 % con los tokens de moda en 41 días. Con tokens establecidos en 5 meses perdía −54 %: los costes de ~450 operaciones anulaban cualquier ventaja. Por eso el agente opera en 4 h.
+- **En plena euforia se queda atrás.** Sobre un universo distinto, 45 tokens de moda del 19/08 al 24/09/2026 (la cesta subió +136 %), la configuración desplegada quedó plana: +0,5 %, con drawdown del 12,5 %. La ruptura en 1 h ganó +42 % en esa ventana, pero es la misma que pierde −45 % en seis meses. En semanas así, agentes más agresivos lo superarán en el ranking. El agente está diseñado para no hundirse, no para exprimir cada subida.
 
 Reproducir:
 
