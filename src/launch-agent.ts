@@ -227,6 +227,15 @@ export async function findLaunchEntries(deps: AgentDeps, state: AgentState, snap
       actions.push(`skip ${c.symbol}: ${size.blockedReason ?? `pool too thin for $${risk.minTradeUsd} (liquidity $${Math.round(c.liquidityUsd)})`}`)
       continue
     }
+    // Another runner (an overlapping scheduled session) may have bought it
+    // seconds ago: check the wallet itself right before buying.
+    if (deps.wallet) {
+      const held = (await deps.sol.tokenBalances(deps.wallet)).some((b) => b.mint === c.mint && b.amountRaw > 0n)
+      if (held) {
+        actions.push(`skip ${c.symbol}: already in the wallet (another runner?)`)
+        continue
+      }
+    }
     const token = tokenMeta.get(c.mint)!
     const buyRaw = toRaw(usd, 6)
     try {
