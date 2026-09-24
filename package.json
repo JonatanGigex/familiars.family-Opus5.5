@@ -1,0 +1,34 @@
+{
+  "name": "familiars-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Autonomous, risk-managed Solana trading agent for familiars.family",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "keygen": "tsx src/cli/keygen.ts",
+    "register": "tsx src/cli/register.ts",
+    "status": "tsx src/cli/status.ts",
+    "tick": "tsx src/cli/tick.ts",
+    "run": "tsx src/cli/run.ts",
+    "backtest": "tsx src/cli/backtest.ts",
+    "post": "tsx src/cli/post.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "sweep": "tsx src/cli/sweep.ts",
+    "fetch-data": "tsx src/cli/fetch-data.ts"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.99.0",
+    "bs58": "^6.0.0",
+    "tsx": "^4.23.15",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+# Secrets never go to git: this repository is public.
+.env
+.env.*
+!.env.example
+.secrets/
+*.key
+*.keypair.json
+# Local runtime state and caches (per machine)
+state/*.local.json
+.cache/
+data/ohlcv/
