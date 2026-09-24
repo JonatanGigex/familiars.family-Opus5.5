@@ -52,6 +52,8 @@ export interface DayStats {
   startEquityUsd: number
   /** Paper mode: P&L at the first tick of the day. */
   startPnlUsd?: number
+  /** Live mode: today's buys have been merged from familiars' history. */
+  boughtRebuilt?: boolean
   boughtUsd: number
   realizedPnlUsd: number
   trades: number

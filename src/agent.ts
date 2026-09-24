@@ -131,10 +131,16 @@ async function snapshot(deps: AgentDeps, state: AgentState): Promise<{ holdings:
     const [lamports, tokens] = await Promise.all([deps.sol.solBalanceLamports(deps.wallet), deps.sol.tokenBalances(deps.wallet)])
     solQty = lamports / LAMPORTS_PER_SOL
     const prices = await deps.jup.prices([SOL_MINT, USDC_MINT, ...positionMints, ...tokens.filter((t) => t.amountRaw > 0n).map((t) => t.mint)])
+    let wsolQty = 0
     for (const t of tokens) {
       if (t.amountRaw === 0n) continue
       if (t.mint === USDC_MINT) {
         cashUsd += t.uiAmount * (prices[USDC_MINT] ?? 1)
+        continue
+      }
+      if (t.mint === SOL_MINT) {
+        // Wrapped SOL counts toward equity with native SOL; swaps use native SOL only.
+        wsolQty += t.uiAmount
         continue
       }
       const price = prices[t.mint] ?? 0
@@ -144,7 +150,7 @@ async function snapshot(deps: AgentDeps, state: AgentState): Promise<{ holdings:
       holdings.set(t.mint, { mint: t.mint, qty, amountRaw, decimals: t.decimals, priceUsd: price, valueUsd: qty * price })
     }
     const solPrice = prices[SOL_MINT] ?? 0
-    holdings.set(SOL_MINT, { mint: SOL_MINT, qty: solQty, amountRaw: BigInt(lamports), decimals: 9, priceUsd: solPrice, valueUsd: solQty * solPrice })
+    holdings.set(SOL_MINT, { mint: SOL_MINT, qty: solQty + wsolQty, amountRaw: BigInt(lamports), decimals: 9, priceUsd: solPrice, valueUsd: (solQty + wsolQty) * solPrice })
     let equityUsd = cashUsd
     for (const h of holdings.values()) equityUsd += h.valueUsd
     return { holdings, prices, cashUsd, solQty, equityUsd }
@@ -274,6 +280,12 @@ async function manageExits(deps: AgentDeps, state: AgentState, snap: Awaited<Ret
       for (let i = 0; i < data.candles.length; i++) {
         const bar = data.candles[i]!
         if (bar.t <= pos.lastBarT) continue
+        pos.lastBarT = bar.t
+        // Same order as the backtest: the stop is checked inside the bar first.
+        if (bar.l <= pos.stop) {
+          pos.exitReason = pos.stop >= pos.entryPrice ? 'trailing stop touched during the bar' : 'stop loss touched during the bar'
+          break
+        }
         pos.barsHeld++
         const chk = manageOnBarClose(
           { entryPrice: pos.entryPrice, initialStop: pos.initialStop, stop: pos.stop, highWater: pos.highWater, barsHeld: pos.barsHeld },
@@ -283,16 +295,17 @@ async function manageExits(deps: AgentDeps, state: AgentState, snap: Awaited<Ret
           roundTrip,
         )
         pos.highWater = Math.max(pos.highWater, bar.h)
-        pos.lastBarT = bar.t
         if (chk.stop > pos.stop) {
           actions.push(`${pos.symbol} stop ${pos.stop.toPrecision(4)} -> ${chk.stop.toPrecision(4)}`)
           pos.stop = chk.stop
         }
-        if (chk.exit && i === data.candles.length - 1) {
-          await sellPosition(deps, state, pos, holding, price, chk.reason ?? 'exit signal', actions)
+        if (chk.exit) {
+          // Kept on the position until the sell succeeds, so a failed exit is retried.
+          pos.exitReason = chk.reason ?? 'exit rule'
           break
         }
       }
+      if (pos.exitReason) await sellPosition(deps, state, pos, holding, price, pos.exitReason, actions)
     } catch (e) {
       actions.push(`candles for ${pos.symbol} unavailable: ${errMsg(e)}`)
     }
@@ -667,14 +680,20 @@ export async function tick(deps: AgentDeps, state: AgentState): Promise<TickRepo
     actions.push(`public profile unavailable: ${errMsg(e)}`)
   }
   await reconcile(deps, state, snap, actions, detail?.trades ?? [])
-  const freshDay = !state.days[utcDay(now)]
   const day = dayStats(state, now, snap.equityUsd)
   let account: AccountPnl | null
   if (deps.executor.live) {
     account = detail ? accountFromHistory(detail.history?.snapshots ?? [], now) : null
-    // A new machine mid-day must still honour the owner's daily limit.
-    if (freshDay && detail) day.boughtUsd = Math.max(day.boughtUsd, boughtOnDay(detail.trades ?? [], utcDay(now)))
-    if (freshDay && !detail) ownerOk = false
+    // A new machine mid-day must still honour the owner's daily limit: no
+    // entries until today's buys have been read from the public history.
+    if (!day.boughtRebuilt) {
+      if (detail) {
+        day.boughtUsd = Math.max(day.boughtUsd, boughtOnDay(detail.trades ?? [], utcDay(now)))
+        day.boughtRebuilt = true
+      } else {
+        ownerOk = false
+      }
+    }
   } else {
     day.startPnlUsd ??= snap.equityUsd - (state.paper?.startUsd ?? snap.equityUsd)
     account = paperAccount(state, snap.equityUsd, day.startPnlUsd)

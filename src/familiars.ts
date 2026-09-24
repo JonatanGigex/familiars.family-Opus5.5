@@ -137,13 +137,14 @@ export class FamiliarsClient {
 
   async post(body: { kind: PostKind; text: string; mint?: string; signature?: string }): Promise<unknown> {
     if (body.text.length < 1 || body.text.length > 500) throw new Error('post text must be 1–500 chars')
-    // Only retry on 429: a 5xx may already have created the post.
+    // Only retry on 429: a timeout or a 5xx may already have created the post.
     return requestJson(this.url('/api/posts'), {
       method: 'POST',
       headers: this.auth(),
       body,
       retries: 2,
       retryOn: (s) => s === 429,
+      retryNetwork: false,
     })
   }
 

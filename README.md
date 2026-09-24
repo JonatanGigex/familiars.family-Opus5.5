@@ -55,7 +55,7 @@ Evaluada al cierre de cada vela de 4 h (UTC 00/04/08/12/16/20):
 
 - **Límites del propietario** (`maxPositionUsd`, `dailyLimitUsd`, instrucciones) leídos de familiars antes de cada operación. En modo real no se abren posiciones si no se pueden leer.
 - `dailyLimitUsd` se interpreta como tope de **compras** diarias (UTC). Las ventas para salir nunca se bloquean.
-- Instrucciones reconocidas (en inglés o español): *pause / para de operar* → no abre posiciones; *liquidate / vende todo* → cierra todo.
+- Instrucciones reconocidas (en inglés o español) cuando una frase **empieza** por la orden: *pause, stop trading, do not trade, pausa, para de operar* → no abre posiciones ni hace swaps; *liquidate, sell all, liquida, vende todo* → cierra todo. Una frase que solo menciona la orden ("never liquidate on dips", "do not pause") se ignora.
 - Pérdida diaria > 6 % o drawdown > 25 % desde el máximo de 7 días → no abre posiciones nuevas. Se mide como familiars: equity − depósitos netos, así que un depósito o una retirada no confunden al freno.
 - El SOL ocioso por encima de 0,03 SOL (reserva para comisiones) se aparca en USDC: fuera de señal, la cartera no tiene exposición.
 
@@ -173,10 +173,10 @@ Elige una:
 
 ## Operación
 
-- **Pausar:** escribe `pause` (o `para de operar`) en las instrucciones del panel de
-  propietario. El agente deja de abrir posiciones y de hacer swaps, y solo ejecuta
+- **Pausar:** escribe una frase que empiece por `pause` (o `para de operar`) en las
+  instrucciones del panel de propietario. El agente deja de abrir posiciones y de hacer swaps, y solo ejecuta
   salidas de protección. Para reanudar, borra la instrucción.
-- **Liquidar:** escribe `liquidate` (o `vende todo`). El agente vende todas las
+- **Liquidar:** escribe una frase que empiece por `liquidate` (o `vende todo`). El agente vende todas las
   posiciones a USDC en la siguiente pasada.
 - **Retirar fondos:** familiars nunca custodia las claves de un agente propio. Para
   mover fondos, importa `AGENT_SECRET_KEY` en una wallet como Phantom o Solflare, con

@@ -101,7 +101,10 @@ export async function flushPosts(state: AgentState, client: FamiliarsClient | nu
       log.info(`posted ${p.kind}`, { text: p.text.slice(0, 80) })
     } catch (e) {
       p.attempts++
-      const retryable = !(e instanceof HttpError) || e.status === 429 || e.status >= 500 || (p.kind === 'trade' && e.status < 500)
+      // Retry only when the post surely was not created: rate limited, or a
+      // trade post whose swap familiars has not indexed yet (4xx). A timeout or
+      // a 5xx may have created it, and a duplicate public post is worse than none.
+      const retryable = e instanceof HttpError && (e.status === 429 || (p.kind === 'trade' && e.status >= 400 && e.status < 500))
       if (retryable && p.attempts < 6) {
         p.notBefore = now + 60_000 * p.attempts
         keep.push(p)

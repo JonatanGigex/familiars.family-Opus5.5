@@ -84,9 +84,18 @@ describe('parseDirective', () => {
     expect(parseDirective('Only liquid tokens')).toBeNull()
     expect(parseDirective('Please pause for today')).toBe('pause')
     expect(parseDirective('para de operar')).toBe('pause')
+    expect(parseDirective('Do not trade until Monday.')).toBe('pause')
     expect(parseDirective('Liquidate everything now')).toBe('liquidate')
     expect(parseDirective('vende todo')).toBe('liquidate')
+    expect(parseDirective('Hold longer. Por favor, pausa hasta el lunes')).toBe('pause')
     expect(parseDirective(null)).toBeNull()
+  })
+
+  it('ignores commands that are only mentioned or negated', () => {
+    expect(parseDirective('Never liquidate on dips, hold through volatility')).toBeNull()
+    expect(parseDirective('do not pause, keep trading')).toBeNull()
+    expect(parseDirective('No vendas todo de golpe')).toBeNull()
+    expect(parseDirective('I might ask you to pause later')).toBeNull()
   })
 })
 

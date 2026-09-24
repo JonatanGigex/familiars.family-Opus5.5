@@ -1,7 +1,7 @@
 import { VersionedTransaction, type Keypair } from '@solana/web3.js'
 import { errMsg, log } from './log.js'
 import { JupiterClient, SOL_MINT, type UltraOrder } from './jupiter.js'
-import { associatedTokenAddress, SolanaClient, TOKEN_PROGRAM, type TokenBalance } from './solana.js'
+import { associatedTokenAddress, SolanaClient, TOKEN_PROGRAM, type TokenAccountState, type TokenBalance } from './solana.js'
 import type { AgentState } from './state.js'
 
 export interface SwapRequest {
@@ -41,46 +41,69 @@ function fail(req: SwapRequest, error: string, signature?: string): SwapResult {
   return { ok: false, error, signature, inAmountRaw: req.amountRaw, outAmountRaw: 0n, inUsd: 0, outUsd: 0 }
 }
 
+const SYSTEM_PROGRAM = '11111111111111111111111111111111'
+
 /**
- * The simulation guard's decision, on balances before and after a simulated
- * swap. Changes are summed per mint so a second account of the same token
- * cannot be drained under the cover of the first. Returns a reason to refuse
- * the transaction, or null when it only moves what was asked.
+ * The simulation guard's decision, on our balances and accounts before and
+ * after a simulated swap. It refuses a transaction when:
+ * - SOL (native lamports and wSOL counted as one budget) drops by more than
+ *   what we spend plus bounded fees, or a SOL output falls short of the quote;
+ * - the input token (summed over all our accounts of that mint) loses more than
+ *   requested, the output token receives less than `minOutRaw`, or any other
+ *   token we hold decreases;
+ * - any of our token accounts ends up with another owner, a delegate, or a
+ *   close authority that is not us, or the wallet itself stops being a plain
+ *   system account (so nothing can be handed over for a later drain).
+ * Returns a reason to refuse, or null when the transaction only does what was asked.
  */
 export function checkBalanceChanges(p: {
   req: Pick<SwapRequest, 'inputMint' | 'outputMint' | 'amountRaw'>
+  /** Least acceptable output, in raw units of the output mint (lamports for SOL). */
+  minOutRaw: bigint
+  wallet: string
   preLamports: bigint
   postLamports: bigint
+  walletOwnerAfter: string | null
   /** account -> raw amount before */
   pre: Map<string, bigint>
-  /** account -> raw amount after (null = closed or absent) */
-  post: Record<string, bigint | null>
+  /** account -> state after (null = closed or absent) */
+  post: Record<string, TokenAccountState | null>
   /** account -> mint, for every watched account */
   accountMints: Map<string, string>
 }): string | null {
   const { req } = p
-  const solSpent = req.inputMint === SOL_MINT ? req.amountRaw : 0n
-  const lamportDelta = p.postLamports - p.preLamports
-  if (lamportDelta < -(solSpent + MAX_SOL_OVERHEAD_LAMPORTS)) return `SOL would drop by ${-lamportDelta} lamports`
+  if (p.walletOwnerAfter !== SYSTEM_PROGRAM) return `wallet would be assigned to ${p.walletOwnerAfter}`
+  for (const [account, state] of Object.entries(p.post)) {
+    if (!state) continue
+    if (state.owner !== p.wallet) return `token account ${account} would change owner to ${state.owner}`
+    if (state.delegate) return `token account ${account} would get delegate ${state.delegate}`
+    if (state.closeAuthority && state.closeAuthority !== p.wallet) return `token account ${account} would get close authority ${state.closeAuthority}`
+  }
   const delta = new Map<string, bigint>()
   for (const [account, mint] of p.accountMints) {
-    const change = (p.post[account] ?? 0n) - (p.pre.get(account) ?? 0n)
+    const change = (p.post[account]?.amount ?? 0n) - (p.pre.get(account) ?? 0n)
     delta.set(mint, (delta.get(mint) ?? 0n) + change)
   }
+  // SOL: native lamports and wSOL are one budget.
+  const solDelta = p.postLamports - p.preLamports + (delta.get(SOL_MINT) ?? 0n)
+  if (req.inputMint === SOL_MINT) {
+    if (solDelta < -(req.amountRaw + MAX_SOL_OVERHEAD_LAMPORTS)) return `SOL would drop by ${-solDelta}, more than ${req.amountRaw} plus fees`
+  } else if (req.outputMint === SOL_MINT) {
+    if (solDelta + MAX_SOL_OVERHEAD_LAMPORTS < p.minOutRaw) return `SOL output ${solDelta} short of the ${p.minOutRaw} expected`
+  } else if (solDelta < -MAX_SOL_OVERHEAD_LAMPORTS) {
+    return `SOL would drop by ${-solDelta}`
+  }
   for (const [mint, d] of delta) {
+    if (mint === SOL_MINT) continue
     if (mint === req.inputMint) {
       if (-d > req.amountRaw) return `input would lose ${-d}, more than the ${req.amountRaw} requested`
-    } else if (mint === req.outputMint && mint !== SOL_MINT) {
-      if (d <= 0n) return 'output account would not receive tokens'
+    } else if (mint === req.outputMint) {
+      if (d < p.minOutRaw) return `output ${d} short of the ${p.minOutRaw} expected`
     } else if (d < 0n) {
       return `unrelated token ${mint} would decrease by ${-d}`
     }
   }
-  if (req.outputMint === SOL_MINT) {
-    if (lamportDelta <= 0n) return 'SOL output would not arrive'
-  } else if (!((delta.get(req.outputMint) ?? 0n) > 0n)) {
-    return 'output account would not receive tokens'
-  }
+  if (req.outputMint !== SOL_MINT && !delta.has(req.outputMint)) return 'output account not watched'
   return null
 }
 
@@ -133,7 +156,9 @@ export class LiveExecutor implements Executor {
     const signers = tx.message.staticAccountKeys.slice(0, tx.message.header.numRequiredSignatures).map((k) => k.toBase58())
     if (!signers.includes(wallet)) return fail(req, 'transaction does not require our signature')
 
-    const guard = await this.verifyBySimulation(tx, req, wallet)
+    // The transaction must pay at least what the quote promised, less our tolerance.
+    const minOutRaw = (BigInt(order.outAmount) * BigInt(Math.round((1 - req.maxLossPct) * 10_000))) / 10_000n
+    const guard = await this.verifyBySimulation(tx, req, wallet, minOutRaw)
     if (guard) return fail(req, `simulation guard: ${guard}`)
 
     tx.sign([this.kp])
@@ -162,7 +187,7 @@ export class LiveExecutor implements Executor {
    * lose the requested amount, the output must grow, and nothing else we hold
    * may decrease. Returns an error string, or null when the transaction is sound.
    */
-  private async verifyBySimulation(tx: VersionedTransaction, req: SwapRequest, wallet: string): Promise<string | null> {
+  private async verifyBySimulation(tx: VersionedTransaction, req: SwapRequest, wallet: string, minOutRaw: bigint): Promise<string | null> {
     let holdings: TokenBalance[]
     let preLamports: number
     try {
@@ -177,21 +202,23 @@ export class LiveExecutor implements Executor {
     if (outAccount) watch.add(outAccount)
     let sim
     try {
-      sim = await this.sol.simulateBalances(tx, wallet, [...watch])
+      sim = await this.sol.simulate(tx, wallet, [...watch])
     } catch (e) {
       return `simulation request failed: ${errMsg(e)}`
     }
     if (sim.err) return `simulation error ${JSON.stringify(sim.err)} ${sim.logs.slice(-3).join(' | ')}`
-    if (sim.lamports === null) return 'simulation returned no wallet state'
-
+    if (!sim.wallet) return 'simulation returned no wallet state'
     const accountMints = new Map(holdings.map((h) => [h.account, h.mint]))
     if (outAccount) accountMints.set(outAccount, req.outputMint)
     const verdict = checkBalanceChanges({
       req,
+      minOutRaw,
+      wallet,
       preLamports: BigInt(preLamports),
-      postLamports: BigInt(sim.lamports),
+      postLamports: BigInt(sim.wallet.lamports),
+      walletOwnerAfter: sim.wallet.owner,
       pre: new Map(holdings.map((h) => [h.account, h.amountRaw])),
-      post: sim.tokenAmounts,
+      post: sim.accounts,
       accountMints,
     })
     if (verdict) return verdict

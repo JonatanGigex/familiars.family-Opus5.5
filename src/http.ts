@@ -19,6 +19,11 @@ export interface RequestOptions {
   retries?: number
   /** Statuses worth retrying. Defaults to 429 and 5xx. */
   retryOn?: (status: number) => boolean
+  /**
+   * Retry timeouts and network errors. Off for requests that must not be
+   * repeated when the server may already have acted on them (e.g. posts).
+   */
+  retryNetwork?: boolean
 }
 
 const USER_AGENT = 'familiars-agent/0.1 (+https://familiars.family)'
@@ -27,6 +32,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 export async function requestJson<T>(url: string, opts: RequestOptions = {}): Promise<T> {
   const { method = 'GET', headers = {}, body, timeoutMs = 20_000, retries = 3 } = opts
   const retryOn = opts.retryOn ?? ((s: number) => s === 429 || s >= 500)
+  const retryNetwork = opts.retryNetwork ?? true
   let lastErr: unknown
   for (let attempt = 0; attempt <= retries; attempt++) {
     const ctrl = new AbortController()
@@ -60,10 +66,11 @@ export async function requestJson<T>(url: string, opts: RequestOptions = {}): Pr
     } catch (e) {
       if (e instanceof HttpError) throw e
       lastErr = e
-      if (attempt < retries) {
+      if (attempt < retries && retryNetwork) {
         await sleep(1000 * 2 ** attempt)
         continue
       }
+      break
     } finally {
       clearTimeout(timer)
     }

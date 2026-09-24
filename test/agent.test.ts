@@ -61,6 +61,8 @@ interface World {
   prices: Record<string, number>
   candles: Record<string, Candle[]>
   instructions: string | null
+  /** Sells of these mints fail once, as a flaky route would. */
+  failNextSell?: Set<string>
 }
 
 function makeDeps(state: AgentState, world: World, withOwner = false): AgentDeps {
@@ -71,6 +73,7 @@ function makeDeps(state: AgentState, world: World, withOwner = false): AgentDeps
     prices: async (mints: string[]) => Object.fromEntries(mints.filter((m) => world.prices[m]).map((m) => [m, world.prices[m]!])),
     shield: async () => ({}),
     order: async (q: { inputMint: string; outputMint: string; amount: string }): Promise<UltraOrder> => {
+      if (world.failNextSell?.delete(q.inputMint)) throw new Error('route unavailable')
       const inQty = Number(q.amount) / 10 ** decimals(q.inputMint)
       const outQty = ((inQty * world.prices[q.inputMint]!) / world.prices[q.outputMint]!) * 0.999
       return { requestId: 'r', inputMint: q.inputMint, outputMint: q.outputMint, inAmount: q.amount, outAmount: String(Math.floor(outQty * 10 ** decimals(q.outputMint))), transaction: null }
@@ -163,6 +166,27 @@ describe('tick (paper mode, fake markets)', () => {
     const liq = await tick(makeDeps(state, world, true), state)
     expect(state.positions[X]).toBeUndefined()
     expect(liq.actions.some((a) => a.includes('owner asked to liquidate'))).toBe(true)
+  })
+
+  it('keeps a bar-close exit until the sell goes through', async () => {
+    const state = paperState()
+    const deps = makeDeps(state, world)
+    await tick(deps, state)
+    const pos = state.positions[X]!
+    // The 08:00 bar closes having traded through the stop, then recovered.
+    const bars = world.candles[X]!.slice(0, -1)
+    const entry = world.prices[X]!
+    bars.push({ t: LAST_CLOSED + H4, o: entry, h: entry * 1.01, l: pos.stop * 0.95, c: entry, v: 1000 })
+    bars.push({ t: LAST_CLOSED + 2 * H4, o: entry, h: entry, l: entry, c: entry, v: 10 })
+    world.candles[X] = bars
+    vi.setSystemTime(NOW + 4 * 3600_000)
+    world.failNextSell = new Set([X])
+    const failed = await tick(deps, state)
+    expect(failed.actions.some((a) => a.startsWith('SELL XTK failed'))).toBe(true)
+    expect(state.positions[X]?.exitReason).toMatch(/stop loss touched/)
+    const retried = await tick(deps, state)
+    expect(retried.actions.some((a) => a.startsWith('SELL XTK') && !a.includes('failed'))).toBe(true)
+    expect(state.positions[X]).toBeUndefined()
   })
 
   it('adopts a holding it did not open instead of ignoring it', async () => {

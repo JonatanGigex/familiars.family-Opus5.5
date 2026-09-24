@@ -100,15 +100,15 @@ export class SolanaClient {
   }
 
   /**
-   * Simulates a (possibly partially signed) transaction and returns post-state
-   * lamports / token amounts for the given accounts. Used to prove a swap only
-   * moves what we asked it to move before we sign it.
+   * Simulates a (possibly partially signed) transaction and returns the
+   * post-state of our wallet and the given token accounts. Used to prove a swap
+   * only does what we asked before we sign it.
    */
-  async simulateBalances(
+  async simulate(
     tx: VersionedTransaction,
     wallet: string,
     tokenAccounts: string[],
-  ): Promise<{ err: unknown; logs: string[]; lamports: number | null; tokenAmounts: Record<string, bigint | null> }> {
+  ): Promise<{ err: unknown; logs: string[]; wallet: { lamports: number; owner: string } | null; accounts: Record<string, TokenAccountState | null> }> {
     const addresses = [wallet, ...tokenAccounts]
     const sim = await this.connection.simulateTransaction(tx, {
       sigVerify: false,
@@ -116,20 +116,44 @@ export class SolanaClient {
       commitment: 'confirmed',
       accounts: { encoding: 'base64', addresses },
     })
-    const accounts = sim.value.accounts ?? []
-    const walletAcc = accounts[0]
-    const tokenAmounts: Record<string, bigint | null> = {}
+    const raw = sim.value.accounts ?? []
+    const walletAcc = raw[0]
+    const accounts: Record<string, TokenAccountState | null> = {}
     tokenAccounts.forEach((addr, i) => {
-      const acc = accounts[i + 1]
-      const b64 = acc?.data?.[0]
-      if (!acc || !b64) {
-        tokenAmounts[addr] = null
-        return
-      }
-      const buf = Buffer.from(b64, 'base64')
-      tokenAmounts[addr] = buf.length >= 72 ? buf.readBigUInt64LE(64) : null
+      const b64 = raw[i + 1]?.data?.[0]
+      accounts[addr] = b64 ? parseTokenAccount(Buffer.from(b64, 'base64')) : null
     })
-    return { err: sim.value.err, logs: sim.value.logs ?? [], lamports: walletAcc ? walletAcc.lamports : null, tokenAmounts }
+    return {
+      err: sim.value.err,
+      logs: sim.value.logs ?? [],
+      wallet: walletAcc ? { lamports: walletAcc.lamports, owner: walletAcc.owner } : null,
+      accounts,
+    }
+  }
+}
+
+export interface TokenAccountState {
+  mint: string
+  owner: string
+  amount: bigint
+  delegate: string | null
+  closeAuthority: string | null
+}
+
+/**
+ * Parses the base layout shared by SPL Token and Token-2022 accounts:
+ * mint 0..32, owner 32..64, amount 64..72, delegate COption 72..108,
+ * state 108, is_native 109..121, delegated_amount 121..129, close_authority COption 129..165.
+ */
+export function parseTokenAccount(buf: Buffer): TokenAccountState | null {
+  if (buf.length < 165) return null
+  const key = (o: number) => new PublicKey(buf.subarray(o, o + 32)).toBase58()
+  return {
+    mint: key(0),
+    owner: key(32),
+    amount: buf.readBigUInt64LE(64),
+    delegate: buf.readUInt32LE(72) === 1 ? key(76) : null,
+    closeAuthority: buf.readUInt32LE(129) === 1 ? key(133) : null,
   }
 }
 

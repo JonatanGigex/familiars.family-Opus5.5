@@ -126,15 +126,22 @@ export function entryGuard(a: AccountPnl, rp: RiskParams): string | null {
 
 export type Directive = 'pause' | 'liquidate' | null
 
+const LIQUIDATE = /^(liquidate|sell (it )?all|sell everything|close (all|everything)|exit all|liquida|liquidar|vende todo|vender todo|cierra todo)\b/
+const PAUSE = /^(pause|stop trading|halt|do not trade|don't trade|no new (trades|positions)|pausa|pausar|para de operar|deja de operar|detente|no operes)\b/
+
 /**
  * The owner's free-text instructions are shown on familiars. A deterministic
- * agent cannot follow arbitrary prose, so it honours the unambiguous ones and
- * leaves the rest to the human-reviewed configuration.
+ * agent cannot follow arbitrary prose, so it only acts on sentences that start
+ * with a command ("Pause…", "Liquidate…", "Vende todo…"). A sentence that merely
+ * mentions a command ("Never liquidate on dips", "do not pause") is ignored.
  */
 export function parseDirective(instructions: string | null | undefined): Directive {
-  const text = (instructions ?? '').toLowerCase()
-  if (!text.trim()) return null
-  if (/\b(liquidate|sell (it )?all|close all|exit all|vende todo|liquida|cierra todo)\b/.test(text)) return 'liquidate'
-  if (/\b(pause|stop trading|halt|no new (trades|positions)|do not trade|don't trade|para de operar|pausa|detente|no operes)\b/.test(text)) return 'pause'
+  const sentences = (instructions ?? '')
+    .toLowerCase()
+    .split(/[\n.!?;]+/)
+    .map((x) => x.trim().replace(/^(please|pls|por favor)[\s,]+/, '').trim())
+    .filter(Boolean)
+  if (sentences.some((x) => LIQUIDATE.test(x))) return 'liquidate'
+  if (sentences.some((x) => PAUSE.test(x))) return 'pause'
   return null
 }

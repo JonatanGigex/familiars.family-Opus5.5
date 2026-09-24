@@ -1,13 +1,12 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { tick } from '../agent.js'
 import { bootstrap } from '../bootstrap.js'
+import { acquireLock } from '../lock.js'
 import { errMsg, log } from '../log.js'
 import { flushPosts } from '../poster.js'
 import { saveState } from '../state.js'
 
 // Runs ticks in a loop: `npm run run -- --interval 60 --minutes 55`.
-// A lock file keeps two runners from trading the same state.
 
 const { values } = parseArgs({
   options: {
@@ -19,26 +18,11 @@ const intervalMs = Math.max(20, Number(values.interval)) * 1000
 const deadline = Number(values.minutes) > 0 ? Date.now() + Number(values.minutes) * 60_000 : Infinity
 
 const { cfg, state, deps } = bootstrap()
-const lock = `${cfg.statePath}.lock`
-
-function lockHeld(): boolean {
-  if (!existsSync(lock)) return false
-  try {
-    const { pid, at } = JSON.parse(readFileSync(lock, 'utf8')) as { pid: number; at: number }
-    if (Date.now() - at > 10 * 60_000) return false
-    process.kill(pid, 0)
-    return pid !== process.pid
-  } catch {
-    return false
-  }
-}
-
-if (lockHeld()) {
-  log.error(`another runner holds ${lock}; exiting`)
+const lock = acquireLock(cfg.statePath)
+if (!lock) {
+  log.error(`another runner holds ${cfg.statePath}.lock; exiting`)
   process.exit(1)
 }
-const heartbeat = () => writeFileSync(lock, JSON.stringify({ pid: process.pid, at: Date.now() }))
-heartbeat()
 
 let stopping = false
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
@@ -62,7 +46,7 @@ while (!stopping && Date.now() < deadline) {
     log.error(`tick failed (${failures} in a row)`, { error: errMsg(e) })
   } finally {
     saveState(cfg.statePath, state)
-    heartbeat()
+    lock.heartbeat()
   }
   // Back off when something upstream is down.
   const wait = intervalMs * Math.min(2 ** Math.max(0, failures - 1), 8) - (Date.now() - started)
@@ -77,5 +61,5 @@ while (posting && state.pendingPosts.length && Date.now() < flushUntil && !stopp
   saveState(cfg.statePath, state)
   if (state.pendingPosts.length) await new Promise((r) => setTimeout(r, 15_000))
 }
-rmSync(lock, { force: true })
+lock.release()
 log.info('runner stopped')
