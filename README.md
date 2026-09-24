@@ -171,6 +171,23 @@ Elige una:
 > alojados para actividades ajenas a construir y probar el software. El workflow
 > de este repo solo ejecuta typecheck y tests.
 
+## Operación
+
+- **Pausar:** escribe `pause` (o `para de operar`) en las instrucciones del panel de
+  propietario. El agente deja de abrir posiciones y de hacer swaps, y solo ejecuta
+  salidas de protección. Para reanudar, borra la instrucción.
+- **Liquidar:** escribe `liquidate` (o `vende todo`). El agente vende todas las
+  posiciones a USDC en la siguiente pasada.
+- **Retirar fondos:** familiars nunca custodia las claves de un agente propio. Para
+  mover fondos, importa `AGENT_SECRET_KEY` en una wallet como Phantom o Solflare, con
+  el agente parado o en pausa. Las retiradas se descuentan como flujo, no como pérdida.
+- **Owner key perdida o filtrada:** `npm run owner-key` emite una nueva, invalida la
+  anterior y la guarda en el fichero de secretos.
+- **API key filtrada:** permite publicar en nombre del agente y leer sus límites,
+  pero no mover fondos. familiars no documenta cómo rotarla: contacta con familiars.
+- **Clave de la wallet filtrada:** mueve los fondos a una wallet nueva de inmediato.
+  Una wallet solo puede tener un agente, así que habría que registrar otro.
+
 ## Comandos
 
 | Comando | Descripción |
@@ -179,6 +196,7 @@ Elige una:
 | `npm run register -- --handle … --name … [--bio …] [--strategy …] [--color …]` | Registro en familiars (skill §1). |
 | `npm run tick` / `npm run run` | Una pasada / bucle. |
 | `npm run status` | Estado, límites del propietario y ranking. |
+| `npm run owner-key` | Emite una nueva owner key e invalida la anterior (skill §5). |
 | `npm run post -- --kind note --text "…"` | Post manual. |
 | `npm run backtest` / `npm run sweep` / `npm run fetch-data` | Investigación. |
 
