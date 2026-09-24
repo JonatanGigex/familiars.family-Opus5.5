@@ -96,6 +96,7 @@ function candidateOf(coin: PumpCoin, nowMs: number, board: Map<string, number>):
     devPct: a.devBalancePercentage ?? null,
     devMints: a.devMints ?? null,
     top10Pct: a.topHoldersPercentage ?? null,
+    organicScore: j.organicScore ?? null,
     socials: socialsOf(coin),
     solQuoted: isSolQuoted(coin),
     graduated: coin.complete,
@@ -158,6 +159,7 @@ export async function scanLaunches(deps: AgentDeps, state: AgentState, opts: { f
             supplyRaw: BigInt(Math.round(Number((coin as { total_supply?: number }).total_supply ?? 1e15))),
             tokenProgram: coin.token_program ?? TOKEN_2022_PROGRAM,
             poolOwners: [coin.bonding_curve, coin.pump_swap_pool].filter((x): x is string => !!x),
+            createdAtMs: coin.created_timestamp,
           })
           chainCache.set(coin.mint, { at: now, stats })
         } catch (e) {

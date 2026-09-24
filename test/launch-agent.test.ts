@@ -50,6 +50,7 @@ function jupToken(w: World): JupToken {
     mcap: w.price * 1e9,
     liquidity: w.liquidity,
     holderCount: 320,
+    organicScore: 60,
     audit: { mintAuthorityDisabled: true, freezeAuthorityDisabled: true, topHoldersPercentage: 20, devBalancePercentage: 1, devMints: 1 },
     stats5m: { buyVolume: 9000, sellVolume: 5000, numTraders: 40, priceChange: 12 },
     stats1h: { buyVolume: 60_000, sellVolume: 40_000, numTraders: 300, priceChange: 80 },

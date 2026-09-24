@@ -11,7 +11,7 @@ import {
   utilityScore,
   type LaunchCandidate,
 } from '../src/launch.js'
-import { feePaidLamports, JITO_TIP_ACCOUNTS, ownerDeltas, type RawParsedTx } from '../src/onchain.js'
+import { bundleFromSlot, createsMint, feePaidLamports, JITO_TIP_ACCOUNTS, ownerDeltas, type RawParsedTx } from '../src/onchain.js'
 import { entryFromTrades } from '../src/rebuild.js'
 import type { AgentTrade } from '../src/familiars.js'
 
@@ -30,6 +30,7 @@ function candidate(over: Partial<LaunchCandidate> = {}): LaunchCandidate {
     devPct: 1,
     devMints: 1,
     top10Pct: 20,
+    organicScore: 60,
     socials: { twitter: 'https://x.com/toolkit_ai', website: 'https://toolkit.dev' },
     solQuoted: true,
     graduated: false,
@@ -74,10 +75,21 @@ describe("the agent's added protections", () => {
     expect(screenCheap(candidate({ authoritiesRevoked: false }), p).reasons[0]).toMatch(/authority/)
   })
 
+  it('reject launches whose activity is bots (no organic score), including unreported scores', () => {
+    expect(screenCheap(candidate({ organicScore: 0 }), p).reasons[0]).toMatch(/organic score 0 < 25/)
+    expect(screenCheap(candidate({ organicScore: null }), p).pass).toBe(false)
+    expect(screenCheap(candidate({ organicScore: 31.6 }), p).pass).toBe(true)
+  })
+
   it('reject a heavily bundled launch even after the bundle sold, and an unverifiable one', () => {
     const chain = candidate().chain!
     expect(screenChain(candidate({ chain: { ...chain, bundleBoughtPct: 76, bundleHeldPct: 0 } }), p).reasons[0]).toMatch(/bundle bought 76%/)
     expect(screenChain(candidate({ chain: { ...chain, capped: true, bundleBoughtPct: null, bundleHeldPct: null } }), p).reasons[0]).toMatch(/could not be verified/)
+  })
+
+  it('accept a busy launch whose bundle was verified through its creation block', () => {
+    const chain = candidate().chain!
+    expect(screenChain(candidate({ chain: { ...chain, capped: true, txCount: 15_000 } }), p).pass).toBe(true)
   })
 })
 
@@ -170,8 +182,8 @@ describe('replayLaunch', () => {
 describe('feature tags', () => {
   it('round-trip what the agent saw at entry', () => {
     const tag = featureTag(candidate(), 3)
-    expect(tag).toBe('[mc=45k h=320 bh=2.0 bb=5 d=1.0 fee=0.80 age=35 u=3 ag=2]')
-    expect(parseFeatureTag(`New launch $TOOL ... ${tag}`)).toEqual({ mc: 45_000, h: 320, bh: 2, bb: 5, d: 1, fee: 0.8, age: 35, u: 3, ag: 2 })
+    expect(tag).toBe('[mc=45k h=320 bh=2.0 bb=5 d=1.0 fee=0.80 age=35 u=3 ag=2 o=60]')
+    expect(parseFeatureTag(`New launch $TOOL ... ${tag}`)).toEqual({ mc: 45_000, h: 320, bh: 2, bb: 5, d: 1, fee: 0.8, age: 35, u: 3, ag: 2, o: 60 })
   })
 })
 
@@ -204,6 +216,39 @@ describe('on-chain parsing', () => {
     const withTip = tx({ ixs: [{ program: 'system', parsed: { type: 'transfer', info: { destination: tip, lamports: 100_000 } } }, { program: 'system', parsed: { type: 'transfer', info: { destination: 'someone', lamports: 9 } } }] })
     expect(feePaidLamports(withTip)).toBe(105_000)
     expect(feePaidLamports(tx())).toBe(5_000)
+  })
+})
+
+describe('launch bundle from the creation slot', () => {
+  // Shaped like a real bundled launch: create + dev buy, two bundle transactions
+  // buying 76% between them, the instant migration to the pool, a first pool buy,
+  // and an unrelated transaction in the same slot.
+  const bal = (owner: string, amount: string, mint = 'M') => ({ mint, owner, uiTokenAmount: { amount } })
+  const t = (pre: ReturnType<typeof bal>[], post: ReturnType<typeof bal>[], err: unknown = null) => ({ meta: { fee: 5_000, err, preTokenBalances: pre, postTokenBalances: post } })
+  const slot = [
+    t([bal('x', '5', 'OTHER')], [bal('x', '1', 'OTHER')]),
+    t([], [bal('dev', '34'), bal('curve', '966')]),
+    t([bal('curve', '966')], [bal('curve', '418'), bal('b1', '251'), bal('b2', '297')]),
+    t([bal('curve', '418')], [bal('curve', '207'), bal('b3', '170'), bal('b4', '41')]),
+    t([bal('curve', '207')], [bal('curve', '0'), bal('pool', '207')]),
+    t([bal('pool', '207')], [bal('pool', '118'), bal('b5', '89')]),
+    t([bal('curve', '0')], [bal('late', '50')], { InstructionError: [0, 'Custom'] }),
+  ]
+
+  it('recognises the transaction that creates the mint', () => {
+    expect(slot.map((x) => createsMint(x, 'M'))).toEqual([false, true, false, false, false, false, false])
+    // An empty account opened for the mint later is not a creation.
+    expect(createsMint(t([], [bal('someone', '0')]), 'M')).toBe(false)
+  })
+
+  it('counts every non-dev, non-pool wallet that received the token in that slot', () => {
+    const b = bundleFromSlot(slot, 'M', new Set(['dev', 'curve', 'pool']))!
+    expect(b.wallets.sort()).toEqual(['b1', 'b2', 'b3', 'b4', 'b5'])
+    expect(b.boughtRaw).toBe(251n + 297n + 170n + 41n + 89n)
+  })
+
+  it('refuses a slot that does not contain the creation', () => {
+    expect(bundleFromSlot(slot.slice(2), 'M', new Set(['dev', 'curve', 'pool']))).toBeNull()
   })
 })
 

@@ -31,6 +31,12 @@ export interface LaunchParams {
   requireSolQuote: boolean
   // --- quality ------------------------------------------------------------------
   minUtilityScore: number
+  /**
+   * Jupiter's organic score (0-100): the share of activity from real traders.
+   * Volume bots pass every count-based filter (holders, traders, even fees);
+   * a launch with no organic activity is trading against bots.
+   */
+  minOrganicScore: number
   /** Only buy mints a reviewer approved (the Claude routine writes approvals). */
   requireApproval: boolean
   // --- momentum confirmation -----------------------------------------------------
@@ -75,6 +81,7 @@ export const DEFAULT_LAUNCH: LaunchParams = {
   maxRoundTripPct: 0.06,
   requireSolQuote: true,
   minUtilityScore: 1,
+  minOrganicScore: 25,
   requireApproval: false,
   minBuySellRatio5m: 1.1,
   minTraders5m: 8,
@@ -113,6 +120,8 @@ export interface LaunchCandidate {
   devPct: number | null
   devMints: number | null
   top10Pct: number | null
+  /** Jupiter's organic score, null when not reported. */
+  organicScore: number | null
   socials: { twitter?: string; telegram?: string; website?: string }
   solQuoted: boolean
   graduated: boolean
@@ -147,6 +156,7 @@ export function screenCheap(c: LaunchCandidate, p: LaunchParams): Verdict {
   if (p.requireSolQuote && !c.solQuoted) r.push('not quoted in SOL')
   if (!c.authoritiesRevoked) r.push('mint/freeze authority active')
   if (c.liquidityUsd < p.minLiquidityUsd) r.push(`liquidity $${Math.round(c.liquidityUsd)}`)
+  if ((c.organicScore ?? 0) < p.minOrganicScore) r.push(`organic score ${(c.organicScore ?? 0).toFixed(0)} < ${p.minOrganicScore} (bot activity)`)
   return { pass: r.length === 0, reasons: r }
 }
 
@@ -155,7 +165,7 @@ export function screenChain(c: LaunchCandidate, p: LaunchParams): Verdict {
   const r: string[] = []
   const ch = c.chain
   if (!ch) return { pass: false, reasons: ['on-chain analysis missing'] }
-  if (ch.capped || ch.bundleHeldPct === null || ch.bundleBoughtPct === null) r.push('launch bundle could not be verified')
+  if (ch.bundleHeldPct === null || ch.bundleBoughtPct === null) r.push('launch bundle could not be verified')
   else {
     if (ch.bundleHeldPct > p.maxBundlersHeldPct) r.push(`bundlers still hold ${ch.bundleHeldPct.toFixed(1)}%`)
     if (ch.bundleBoughtPct > p.maxBundlersBoughtPct) r.push(`bundle bought ${ch.bundleBoughtPct.toFixed(0)}% at launch`)
@@ -323,7 +333,7 @@ export function replayLaunch(candles: Candle[], entryTimeSec: number, entryPrice
 export function featureTag(c: LaunchCandidate, utility: number): string {
   const ch = c.chain
   const f = (x: number | null | undefined, d = 1) => (x === null || x === undefined ? '-' : x.toFixed(d))
-  return `[mc=${Math.round(c.mcapUsd / 1000)}k h=${c.holders} bh=${f(ch?.bundleHeldPct)} bb=${f(ch?.bundleBoughtPct, 0)} d=${f(c.devPct)} fee=${f(ch?.feesSol, 2)} age=${Math.round(c.ageMin)} u=${utility} ag=${c.boardAgents}]`
+  return `[mc=${Math.round(c.mcapUsd / 1000)}k h=${c.holders} bh=${f(ch?.bundleHeldPct)} bb=${f(ch?.bundleBoughtPct, 0)} d=${f(c.devPct)} fee=${f(ch?.feesSol, 2)} age=${Math.round(c.ageMin)} u=${utility} ag=${c.boardAgents} o=${f(c.organicScore, 0)}]`
 }
 
 export function parseFeatureTag(text: string): Record<string, number> | null {

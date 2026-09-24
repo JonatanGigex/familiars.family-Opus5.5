@@ -55,12 +55,23 @@ otros tokens.
 | Coste de ida y vuelta ≤ 6 % | Detecta impuestos y *honeypots* |
 | Cotizado en SOL, autoridades revocadas y sin extensiones Token-2022 peligrosas | Seguridad básica |
 | Momentum: compras ≥ 1,1× ventas en 5 min, ≥ 8 traders, sin vela vertical | No comprar un token que ya se vende |
+| *Organic score* de Jupiter ≥ 25 | Los bots de volumen superan todos los filtros de recuento (holders, traders e incluso fees). Ver abajo |
+
+**Por qué el *organic score*.** El 24-09-2026 casi todos los lanzamientos que pasaban
+los filtros del propietario eran actividad de bots: en FOMODOG y Muse, las
+transacciones muestreadas entre las 1.000 más recientes pagaban exactamente la misma
+comisión (55.001 y 7.401 lamports) a unas 29 y 9 tx/s, y Jupiter les daba un *organic
+score* de 0. Los tokens que más dinero dieron ese día en el ranking de familiars
+tenían 84,9 ($familiars) y 47,3 (JEANCOIN). De 54 lanzamientos de menos de 120 min,
+solo 4 superaban 25. Es una muestra pequeña, medida después y no en el momento de la
+compra, así que el umbral se revisará con los resultados (`npm run learn` puede
+subirlo, nunca bajarlo).
 
 **Forense on-chain** (ninguna API pública lo da de forma fiable):
 
-- *Bundlers*: compradores del mismo slot que la creación del token (sin contar al dev). Se mide cuánto compraron y cuánto conservan hoy.
+- *Bundlers*: compradores del mismo slot que la creación del token (sin contar al dev ni los pools). Se mide cuánto compraron y cuánto conservan hoy. El slot de creación sale del historial del propio token o, si tiene demasiadas transacciones (los más activos, justo los interesantes), del historial del creador cerca de la hora de creación que da pump.fun; se comprueba que esa transacción crea el token y se lee el bloque entero en una sola llamada. Validado con Muse: mismo resultado por los dos caminos (13,5 % comprado y retenido).
 - *Fees pagados*: fees de red más propinas Jito de todos los traders. Se estiman con una muestra de transacciones repartida por la vida del token y se escalan al total. Es una aproximación; si tu definición de fees es otra (p. ej. comisiones de trading), se cambia en `src/onchain.ts`.
-- Si no se puede verificar (demasiadas transacciones para llegar a la creación), se rechaza.
+- Si aun así no se puede verificar (el creador no firmó la creación o tiene demasiada actividad), se rechaza. En tokens con más de 15.000 transacciones los fees son un mínimo (se cuentan solo las 15.000 más recientes).
 
 **Utilidad.** La heurística suma por web propia, cuenta de X que corresponde al
 token, código en GitHub y una descripción de producto. Resta por enlaces a cuentas

@@ -97,7 +97,12 @@ export interface Suggestion {
  * closed trades, a move needs a clear gap between winners and losers, and
  * each move is at most halfway toward the winners' lower quartile.
  */
-export function suggest(outcomes: Outcome[], p: LaunchParams, owner: Pick<LaunchParams, 'minFeesSol' | 'minHolders' | 'maxBundlersHeldPct' | 'maxDevPct' | 'maxAgeMin' | 'minMcapUsd'>, minTrades = 20): Suggestion[] {
+export function suggest(
+  outcomes: Outcome[],
+  p: LaunchParams,
+  owner: Pick<LaunchParams, 'minFeesSol' | 'minHolders' | 'maxBundlersHeldPct' | 'maxDevPct' | 'maxAgeMin' | 'minMcapUsd' | 'minOrganicScore'>,
+  minTrades = 20,
+): Suggestion[] {
   const closed = outcomes.filter((o) => o.closed)
   if (closed.length < minTrades) return []
   const winners = closed.filter((o) => o.pnlPct > 0)
@@ -106,11 +111,12 @@ export function suggest(outcomes: Outcome[], p: LaunchParams, owner: Pick<Launch
   const out: Suggestion[] = []
   const vals = (os: Outcome[], k: string) => os.map((o) => o.features[k]).filter((x): x is number => x !== undefined && Number.isFinite(x))
 
-  // "Higher is better" features with a floor: fees paid, holders, market cap.
+  // "Higher is better" features with a floor: fees paid, holders, market cap, organic score.
   const floors: [keyof LaunchParams, string, number, number][] = [
     ['minFeesSol', 'fee', owner.minFeesSol, 5],
     ['minHolders', 'h', owner.minHolders, 2000],
     ['minMcapUsd', 'mc', owner.minMcapUsd, 500_000],
+    ['minOrganicScore', 'o', owner.minOrganicScore, 80],
   ]
   for (const [param, key, lo, hi] of floors) {
     const w = vals(winners, key)

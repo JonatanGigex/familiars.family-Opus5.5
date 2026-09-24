@@ -21,7 +21,7 @@ for (const s of rows) {
   const c = s.candidate
   const flag = s.eligible ? 'ELIGIBLE' : s.chain && !s.chain.pass ? 'chain✗' : !s.cheap.pass ? 'filter✗' : !s.momentum.ok ? 'momentum✗' : s.utility.score < deps.params.launch.minUtilityScore ? 'utility✗' : 'pending'
   console.log(
-    `${flag.padEnd(9)} ${c.symbol.slice(0, 10).padEnd(10)} age ${Math.round(c.ageMin).toString().padStart(3)}m  mcap $${Math.round(c.mcapUsd).toLocaleString('en-US').padStart(9)}  holders ${String(c.holders).padStart(5)}  dev ${pct(c.devPct)}  devMints ${c.devMints ?? '-'}  bundle held ${pct(c.chain?.bundleHeldPct)} bought ${pct(c.chain?.bundleBoughtPct)}  fees ${c.chain ? c.chain.feesSol.toFixed(2) : ' n/a'} SOL  5m b/s ${s.momentum.ratio.toFixed(2)}  utility ${s.utility.score}`,
+    `${flag.padEnd(9)} ${c.symbol.slice(0, 10).padEnd(10)} age ${Math.round(c.ageMin).toString().padStart(3)}m  mcap $${Math.round(c.mcapUsd).toLocaleString('en-US').padStart(9)}  holders ${String(c.holders).padStart(5)}  dev ${pct(c.devPct)}  devMints ${c.devMints ?? '-'}  bundle held ${pct(c.chain?.bundleHeldPct)} bought ${pct(c.chain?.bundleBoughtPct)}  fees ${c.chain ? c.chain.feesSol.toFixed(2) : ' n/a'} SOL  5m b/s ${s.momentum.ratio.toFixed(2)}  organic ${c.organicScore === null ? 'n/a' : c.organicScore.toFixed(0)}  utility ${s.utility.score}`,
   )
   console.log(`          ${c.mint}  ${[c.socials.twitter, c.socials.website, c.socials.telegram].filter(Boolean).join('  ')}`)
   const why = [...s.cheap.reasons, ...(s.chain?.reasons ?? []), ...s.momentum.reasons]
@@ -44,7 +44,7 @@ writeFileSync(
       eligible: s.eligible,
       reasons: [...s.cheap.reasons, ...(s.chain?.reasons ?? []), ...s.momentum.reasons],
       utility: s.utility,
-      metrics: { ageMin: s.candidate.ageMin, mcapUsd: s.candidate.mcapUsd, holders: s.candidate.holders, devPct: s.candidate.devPct, chain: s.candidate.chain },
+      metrics: { ageMin: s.candidate.ageMin, mcapUsd: s.candidate.mcapUsd, holders: s.candidate.holders, devPct: s.candidate.devPct, organicScore: s.candidate.organicScore, chain: s.candidate.chain },
     })),
     (_k, v) => (typeof v === 'bigint' ? v.toString() : v),
     2,
